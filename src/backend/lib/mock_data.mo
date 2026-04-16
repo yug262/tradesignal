@@ -1,0 +1,303 @@
+import Types "../types/trading";
+
+module {
+
+  // Returns 15 realistic mock news articles covering major US equities.
+  // Mix of bullish/bearish, fresh/stale, high/medium/low impact.
+  public func get_mock_articles() : [Types.NewsArticleRef] {
+    // now = approx 1713225600_000_000_000 (Apr 16 2026 00:00 UTC in ns)
+    // 1h  = 3_600_000_000_000
+    // 24h = 86_400_000_000_000
+    let now : Int = 1_713_225_600_000_000_000;
+    let h1  : Int = 3_600_000_000_000;
+    let h24 : Int = 86_400_000_000_000;
+
+    [
+      // 1 — AAPL — earnings bullish — 2h old — processed
+      {
+        id = "art-001";
+        title = "Apple Reports Record Q4 Revenue, EPS Beats by 12%";
+        description = "Apple Inc. reported record-breaking Q4 revenue of $119.6B, with EPS of $2.18 beating consensus by 12%. iPhone 16 demand remained exceptionally strong in all major markets.";
+        source = "Bloomberg";
+        published_at = now - 2 * h1;
+        analyzed_at  = now - h1;
+        image_url = null;
+        impact_score = 8.5;
+        impact_summary = "Significant earnings beat with record revenue. Strong positive catalyst for near-term price action.";
+        executive_summary = "AAPL delivered a record Q4 with EPS $0.24 above consensus. iPhone 16 unit sales exceeded guidance. Services revenue grew 18% YoY. Management raised forward guidance.";
+        news_relevance = "high";
+        news_category = "earnings";
+        affected_symbols = ["AAPL"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.91,\"key_drivers\":[\"EPS_beat\",\"revenue_record\",\"guidance_raise\"]}";
+      },
+
+      // 2 — NVDA — product bullish — 4h old — processed
+      {
+        id = "art-002";
+        title = "Nvidia Announces Next-Gen Blackwell Ultra GPU for Data Centers";
+        description = "Nvidia unveiled the Blackwell Ultra GPU architecture, promising 3x performance gains over H100 for AI inference workloads. Mass production starts Q2 2026.";
+        source = "Reuters";
+        published_at = now - 4 * h1;
+        analyzed_at  = now - 3 * h1;
+        image_url = null;
+        impact_score = 9.1;
+        impact_summary = "Transformative product launch reinforces AI compute leadership. Strong upside catalyst.";
+        executive_summary = "NVDA Blackwell Ultra delivers 3x H100 throughput. Pre-orders from hyperscalers already exceed prior launch volumes. Taiwan fab capacity secured through 2027.";
+        news_relevance = "high";
+        news_category = "product";
+        affected_symbols = ["NVDA", "AMD", "INTC"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.95,\"key_drivers\":[\"product_launch\",\"hyperscaler_demand\",\"supply_secured\"]}";
+      },
+
+      // 3 — TSLA — regulatory bearish — 6h old — processed
+      {
+        id = "art-003";
+        title = "Tesla Issues Safety Recall on 250,000 Vehicles Over FSD Software Bug";
+        description = "NHTSA mandated a recall of 250,000 Tesla vehicles equipped with FSD 12.4 due to a critical edge-case failure in pedestrian detection under low-light conditions.";
+        source = "WSJ";
+        published_at = now - 6 * h1;
+        analyzed_at  = now - 5 * h1;
+        image_url = null;
+        impact_score = 7.8;
+        impact_summary = "Regulatory recall damages FSD brand equity and may delay commercialisation timeline.";
+        executive_summary = "250K vehicles recalled. Fix requires OTA update estimated 3-6 weeks. NHTSA investigation ongoing. FSD rollout to fleet services paused pending resolution.";
+        news_relevance = "high";
+        news_category = "regulatory";
+        affected_symbols = ["TSLA"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bearish\",\"confidence\":0.87,\"key_drivers\":[\"recall\",\"regulatory_scrutiny\",\"fsd_delay\"]}";
+      },
+
+      // 4 — META — earnings bullish — 3h old — processed
+      {
+        id = "art-004";
+        title = "Meta Q3 Ad Revenue Surges 27%, Reels Engagement Hits New High";
+        description = "Meta Platforms reported Q3 ad revenue of $38.9B, up 27% YoY, driven by Reels monetisation. DAU across the Family of Apps reached 3.35B.";
+        source = "CNBC";
+        published_at = now - 3 * h1;
+        analyzed_at  = now - 2 * h1;
+        image_url = null;
+        impact_score = 7.2;
+        impact_summary = "Strong ad recovery and Reels monetisation exceed expectations. Positive for ad-tech sector.";
+        executive_summary = "META Q3 revenue $38.9B (+27%). Reels impressions +40% QoQ. Operating margin expanded to 38%. Q4 guidance raised to $40-42B.";
+        news_relevance = "high";
+        news_category = "earnings";
+        affected_symbols = ["META", "GOOGL", "SNAP"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.88,\"key_drivers\":[\"revenue_beat\",\"reels_growth\",\"margin_expansion\"]}";
+      },
+
+      // 5 — MSFT — earnings bullish — 5h old — processed
+      {
+        id = "art-005";
+        title = "Microsoft Azure Revenue Grows 33% YoY, Cloud Unit Beats Estimates";
+        description = "Microsoft's Intelligent Cloud segment reported revenue of $28.5B, with Azure growing 33% YoY on accelerating AI workload adoption. Copilot seat count doubled QoQ.";
+        source = "Bloomberg";
+        published_at = now - 5 * h1;
+        analyzed_at  = now - 4 * h1;
+        image_url = null;
+        impact_score = 8.0;
+        impact_summary = "Azure acceleration signals cloud AI spend inflection. Broad positive read-through for cloud sector.";
+        executive_summary = "MSFT Intelligent Cloud at $28.5B, +15% YoY. Azure +33%. Copilot seats: 60M, doubled QoQ. FY guidance raised. Operating margin 46%.";
+        news_relevance = "high";
+        news_category = "earnings";
+        affected_symbols = ["MSFT", "AMZN", "GOOGL"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.90,\"key_drivers\":[\"azure_acceleration\",\"copilot_adoption\",\"guidance_raise\"]}";
+      },
+
+      // 6 — AMZN — macro bullish — 8h old — processed
+      {
+        id = "art-006";
+        title = "Amazon AWS Wins $10B Pentagon JEDI Contract Extension";
+        description = "The Department of Defense awarded Amazon Web Services a $10B extension of the JEDI cloud contract, citing AWS GovCloud reliability and security compliance.";
+        source = "Reuters";
+        published_at = now - 8 * h1;
+        analyzed_at  = now - 7 * h1;
+        image_url = null;
+        impact_score = 8.8;
+        impact_summary = "Landmark government contract secures AWS revenue base and validates public-sector cloud dominance.";
+        executive_summary = "AMZN AWS secures $10B JEDI extension through 2030. Pentagon cited cost performance and zero-trust compliance. Competitive moat in government cloud reinforced.";
+        news_relevance = "high";
+        news_category = "macro";
+        affected_symbols = ["AMZN", "MSFT", "GOOGL"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.86,\"key_drivers\":[\"contract_win\",\"government_cloud\",\"revenue_visibility\"]}";
+      },
+
+      // 7 — GOOGL — regulatory bearish — 10h old — processed
+      {
+        id = "art-007";
+        title = "DOJ Files Second Antitrust Suit Against Google Over Ad Tech Monopoly";
+        description = "The U.S. Department of Justice filed a second antitrust lawsuit against Alphabet, targeting Google's dominance in programmatic advertising and its control of the ad exchange stack.";
+        source = "NYT";
+        published_at = now - 10 * h1;
+        analyzed_at  = now - 9 * h1;
+        image_url = null;
+        impact_score = 7.5;
+        impact_summary = "Second DOJ action increases regulatory overhang and potential structural remedies risk.";
+        executive_summary = "DOJ alleges Google operates an illegal monopoly across publisher ad servers, ad exchanges, and ad networks. Potential remedies include divestiture of DV360 or AdX.";
+        news_relevance = "high";
+        news_category = "regulatory";
+        affected_symbols = ["GOOGL", "META", "TTD"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bearish\",\"confidence\":0.82,\"key_drivers\":[\"doj_suit\",\"divestiture_risk\",\"ad_revenue_threat\"]}";
+      },
+
+      // 8 — JPM — macro bearish — 12h old — processed
+      {
+        id = "art-008";
+        title = "JPMorgan CEO Jamie Dimon Warns of Stagflation Risk in Annual Letter";
+        description = "JPMorgan Chase CEO Jamie Dimon's annual shareholder letter cautioned investors that persistent inflation and slowing growth could produce a stagflationary environment, the hardest for markets to navigate.";
+        source = "FT";
+        published_at = now - 12 * h1;
+        analyzed_at  = now - 11 * h1;
+        image_url = null;
+        impact_score = 6.9;
+        impact_summary = "High-credibility macro warning from a systematic risk bellwether. Increases defensive posture rationale.";
+        executive_summary = "Dimon cited sticky CPI, Fed policy uncertainty, and geopolitical stress as stagflation catalysts. JPM increased loan-loss reserves by 8%. Advises clients to hedge duration risk.";
+        news_relevance = "medium";
+        news_category = "macro";
+        affected_symbols = ["JPM", "BAC", "GS", "SPY"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bearish\",\"confidence\":0.79,\"key_drivers\":[\"macro_warning\",\"stagflation\",\"reserve_increase\"]}";
+      },
+
+      // 9 — NFLX — earnings bullish — 18h old — processed
+      {
+        id = "art-009";
+        title = "Netflix Subscriber Growth Beats Forecast, Adds 9.8M in Q3";
+        description = "Netflix added 9.8M net new subscribers in Q3, well above analyst consensus of 6.3M, boosted by password-sharing crackdown completion and strong international content slate.";
+        source = "Bloomberg";
+        published_at = now - 18 * h1;
+        analyzed_at  = now - 17 * h1;
+        image_url = null;
+        impact_score = 7.4;
+        impact_summary = "Sub beat signals successful monetisation of password-sharing crackdown. Growth narrative restored.";
+        executive_summary = "NFLX adds 9.8M subs (est. 6.3M). Ad-supported tier now 45% of new sign-ups. ARM grew 6% QoQ. Q4 guidance: 8-10M net adds. Free cash flow $2.1B.";
+        news_relevance = "high";
+        news_category = "earnings";
+        affected_symbols = ["NFLX", "DIS", "WBD"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.85,\"key_drivers\":[\"sub_beat\",\"ad_tier_growth\",\"fcf_strength\"]}";
+      },
+
+      // 10 — AMD — earnings bullish — 20h old — processed
+      {
+        id = "art-010";
+        title = "AMD Gains Market Share in Data Center Chips, Q3 Beats Consensus";
+        description = "Advanced Micro Devices reported Q3 data center revenue of $3.5B, up 122% YoY, driven by MI300X GPU adoption at hyperscalers displacing Nvidia in inference workloads.";
+        source = "Reuters";
+        published_at = now - 20 * h1;
+        analyzed_at  = now - 19 * h1;
+        image_url = null;
+        impact_score = 7.0;
+        impact_summary = "Market share gains in AI accelerators validate competitive positioning against NVDA.";
+        executive_summary = "AMD DC revenue $3.5B, +122% YoY. MI300X deployed at 4 hyperscalers. Client segment recovered +49% YoY. Raised FY data center guidance to $12B+.";
+        news_relevance = "high";
+        news_category = "earnings";
+        affected_symbols = ["AMD", "NVDA", "INTC"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.83,\"key_drivers\":[\"data_center_beat\",\"hyperscaler_adoption\",\"guidance_raise\"]}";
+      },
+
+      // 11 — COIN — regulatory bearish — 30h old — pending
+      {
+        id = "art-011";
+        title = "SEC Issues New Crypto Exchange Regulations, Coinbase Faces Compliance Deadline";
+        description = "The SEC released final rules for crypto exchange registration, requiring full custody segregation and real-time reporting by Q1 2027. Coinbase faces the highest compliance burden due to its retail and institutional business mix.";
+        source = "WSJ";
+        published_at = now - 30 * h1;
+        analyzed_at  = now - 29 * h1;
+        image_url = null;
+        impact_score = 6.5;
+        impact_summary = "New SEC rules increase compliance cost and operational complexity for Coinbase specifically.";
+        executive_summary = "SEC mandates custody segregation and real-time reporting. COIN estimated compliance cost $150-200M. Timeline: Q1 2027. COIN well-positioned vs offshore competitors.";
+        news_relevance = "medium";
+        news_category = "regulatory";
+        affected_symbols = ["COIN", "HOOD", "MSTR"];
+        processing_status = "pending";
+        raw_analysis_data = "{\"sentiment\":\"bearish\",\"confidence\":0.74,\"key_drivers\":[\"sec_rules\",\"compliance_cost\",\"deadline_pressure\"]}";
+      },
+
+      // 12 — PFE — product bullish — 36h old — pending
+      {
+        id = "art-012";
+        title = "FDA Grants Pfizer Breakthrough Therapy Designation for New Oncology Drug";
+        description = "The FDA granted Breakthrough Therapy Designation to Pfizer's PF-07248144, a first-in-class CDK2 inhibitor targeting HR+/HER2- breast cancer, accelerating the review pathway.";
+        source = "Bloomberg";
+        published_at = now - 36 * h1;
+        analyzed_at  = now - 35 * h1;
+        image_url = null;
+        impact_score = 7.6;
+        impact_summary = "BTD accelerates FDA review for a large-market oncology candidate with limited current competition.";
+        executive_summary = "PFE PF-07248144 receives FDA BTD. Phase 3 enrollment accelerated. Peak sales estimate $4-6B/yr. BTD typically reduces review timeline by 12-18 months.";
+        news_relevance = "high";
+        news_category = "product";
+        affected_symbols = ["PFE", "LLY", "MRK"];
+        processing_status = "pending";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.81,\"key_drivers\":[\"fda_btd\",\"accelerated_review\",\"large_tam\"]}";
+      },
+
+      // 13 — INTC — macro bearish — 48h old — skipped
+      {
+        id = "art-013";
+        title = "Intel Announces 15,000 Layoffs, Restructuring Amid Market Share Losses";
+        description = "Intel Corporation announced a restructuring plan including 15,000 layoffs (15% of workforce) and $10B in cost cuts as the company continues to lose market share in PC and server CPUs to AMD.";
+        source = "CNBC";
+        published_at = now - 48 * h1;
+        analyzed_at  = now - 47 * h1;
+        image_url = null;
+        impact_score = 6.8;
+        impact_summary = "Restructuring signals structural decline. Cost cuts may stabilise margins short-term but market share trend is negative.";
+        executive_summary = "INTC cutting 15K jobs, $10B cost reduction. Fab 38 Ohio construction delayed to 2027. Q3 guidance below consensus. New CEO targets fab-lite model by 2027.";
+        news_relevance = "medium";
+        news_category = "macro";
+        affected_symbols = ["INTC", "AMD", "NVDA"];
+        processing_status = "skipped";
+        raw_analysis_data = "{\"sentiment\":\"bearish\",\"confidence\":0.78,\"key_drivers\":[\"layoffs\",\"market_share_loss\",\"guidance_cut\"]}";
+      },
+
+      // 14 — BA — regulatory bearish — 72h old — skipped
+      {
+        id = "art-014";
+        title = "Boeing Suspends 737 MAX Production Line Pending FAA Safety Audit";
+        description = "Boeing suspended its 737 MAX production line in Renton, WA following an unannounced FAA safety audit that identified 97 open non-conformance items. Deliveries to airlines halted indefinitely.";
+        source = "Reuters";
+        published_at = now - 72 * h1;
+        analyzed_at  = now - 71 * h1;
+        image_url = null;
+        impact_score = 8.2;
+        impact_summary = "Production halt directly impacts revenue recognition and delivery schedules. High-severity regulatory event.";
+        executive_summary = "BA halts 737 MAX production at Renton. 97 FAA non-conformance items. Delivery freeze for AA, UAL, Southwest. Cash burn rate increases to $2B/month during halt. Resolution timeline unclear.";
+        news_relevance = "high";
+        news_category = "regulatory";
+        affected_symbols = ["BA", "SPR", "AAL", "UAL"];
+        processing_status = "skipped";
+        raw_analysis_data = "{\"sentiment\":\"bearish\",\"confidence\":0.89,\"key_drivers\":[\"production_halt\",\"faa_audit\",\"delivery_freeze\"]}";
+      },
+
+      // 15 — BRKB — macro bullish — 1h old — processed
+      {
+        id = "art-015";
+        title = "Berkshire Hathaway Discloses $6B New Stake in Energy Sector";
+        description = "Berkshire Hathaway's 13-F filing revealed a new $6B position across three midstream energy companies, signalling Buffett's conviction in domestic energy infrastructure and commodity resilience.";
+        source = "FT";
+        published_at = now - h1;
+        analyzed_at  = now - (h1 / 2);
+        image_url = null;
+        impact_score = 6.3;
+        impact_summary = "Buffett accumulation signals long-term energy conviction. Read-through for midstream and energy infrastructure.";
+        executive_summary = "BRKB disclosed $6B energy stake: $2.8B OXY additions, $2.1B KMI, $1.1B ET. Signals commodity inflation hedge and income generation. Berkshire's energy book now exceeds $25B.";
+        news_relevance = "medium";
+        news_category = "macro";
+        affected_symbols = ["BRKB", "OXY", "KMI", "ET"];
+        processing_status = "processed";
+        raw_analysis_data = "{\"sentiment\":\"bullish\",\"confidence\":0.77,\"key_drivers\":[\"buffett_accumulation\",\"energy_conviction\",\"commodity_hedge\"]}";
+      },
+    ]
+  };
+
+};
