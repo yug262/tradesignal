@@ -11,6 +11,7 @@ import {
   ClipboardList,
   Globe,
   LayoutDashboard,
+  LayoutGrid,
   Newspaper,
   Settings,
   Terminal,
@@ -33,6 +34,11 @@ const NAV_ITEMS: NavItem[] = [
     phase: 2,
   },
   { path: "/news-feed", label: "News Feed", icon: <Newspaper size={16} /> },
+  {
+    path: "/grouping",
+    label: "Stock Grouping",
+    icon: <LayoutGrid size={16} />,
+  },
   {
     path: "/mode-analysis",
     label: "Mode Analysis",

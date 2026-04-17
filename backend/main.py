@@ -16,16 +16,7 @@ db_models.Base.metadata.create_all(bind=database.engine)
 
 # ─── In-memory application state (volatile/cached) ────────────────────────────
 
-class AppState:
-    """Global mutable state container — some parts now backed by Postgres."""
-
-    def __init__(self):
-        # We still keep these for quick access or default values if DB is empty
-        self.config = SystemConfig()
-        self.proc_state = ProcessingState()
-
-
-app_state = AppState()
+from store import _store as app_state
 
 
 # ─── FastAPI app ───────────────────────────────────────────────────────────────

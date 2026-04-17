@@ -4,6 +4,7 @@ import {
   apiGetDashboardSummary,
   apiGetNews,
   apiGetNewsById,
+  apiGetNewsGrouped,
   apiGetProcessingState,
   apiResetConfig,
   apiResetProcessingState,
@@ -29,6 +30,16 @@ export function useFilteredNews(filter: NewsFilter) {
   return useQuery({
     queryKey: ["news", "filtered", filter],
     queryFn: () => apiFilterNews(filter),
+    staleTime: 30_000,
+  });
+}
+
+// ─── Grouped news ────────────────────────────────────────────────────────────
+
+export function useNewsGrouped() {
+  return useQuery({
+    queryKey: ["news", "grouped"],
+    queryFn: () => apiGetNewsGrouped(),
     staleTime: 30_000,
   });
 }

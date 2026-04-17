@@ -4,7 +4,7 @@ Timestamps are in MILLISECONDS (epoch ms) for safe JS number handling.
 """
 
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any
 
 
 class NewsArticleRef(BaseModel):
@@ -22,7 +22,7 @@ class NewsArticleRef(BaseModel):
     news_category: str         # "earnings" | "merger" | "regulatory" | "macro" | "product"
     affected_symbols: list[str]
     processing_status: str     # "pending" | "processed" | "skipped"
-    raw_analysis_data: str     # JSON string
+    raw_analysis_data: Any     # Can be JSON object or string
 
 
 class SystemConfig(BaseModel):

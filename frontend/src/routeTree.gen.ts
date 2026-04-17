@@ -8,214 +8,245 @@
 // You should NOT make any changes in this file as it will be overwritten.
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
-// Import Routes
+import { Route as rootRouteImport } from './routes/__root'
+import { Route as TradePlannerRouteImport } from './routes/trade-planner'
+import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as OpportunitiesRouteImport } from './routes/opportunities'
+import { Route as NewsFeedRouteImport } from './routes/news-feed'
+import { Route as ModeAnalysisRouteImport } from './routes/mode-analysis'
+import { Route as MarketRegimeRouteImport } from './routes/market-regime'
+import { Route as JournalRouteImport } from './routes/journal'
+import { Route as GroupingRouteImport } from './routes/grouping'
+import { Route as IndexRouteImport } from './routes/index'
+import { Route as SymbolsSymbolIdRouteImport } from './routes/symbols.$symbolId'
 
-import { Route as rootRoute } from "./routes/__root";
-import { Route as IndexImport } from "./routes/index";
-import { Route as JournalImport } from "./routes/journal";
-import { Route as MarketRegimeImport } from "./routes/market-regime";
-import { Route as ModeAnalysisImport } from "./routes/mode-analysis";
-import { Route as NewsFeedImport } from "./routes/news-feed";
-import { Route as OpportunitiesImport } from "./routes/opportunities";
-import { Route as SettingsImport } from "./routes/settings";
-import { Route as SymbolsSymbolIdImport } from "./routes/symbols.$symbolId";
-import { Route as TradePlannerImport } from "./routes/trade-planner";
-
-// Create/Update Routes
-
-const SettingsRoute = SettingsImport.update({
-  id: "/settings",
-  path: "/settings",
-  getParentRoute: () => rootRoute,
-} as any);
-
-const OpportunitiesRoute = OpportunitiesImport.update({
-  id: "/opportunities",
-  path: "/opportunities",
-  getParentRoute: () => rootRoute,
-} as any);
-
-const NewsFeedRoute = NewsFeedImport.update({
-  id: "/news-feed",
-  path: "/news-feed",
-  getParentRoute: () => rootRoute,
-} as any);
-
-const ModeAnalysisRoute = ModeAnalysisImport.update({
-  id: "/mode-analysis",
-  path: "/mode-analysis",
-  getParentRoute: () => rootRoute,
-} as any);
-
-const MarketRegimeRoute = MarketRegimeImport.update({
-  id: "/market-regime",
-  path: "/market-regime",
-  getParentRoute: () => rootRoute,
-} as any);
-
-const JournalRoute = JournalImport.update({
-  id: "/journal",
-  path: "/journal",
-  getParentRoute: () => rootRoute,
-} as any);
-
-const TradePlannerRoute = TradePlannerImport.update({
-  id: "/trade-planner",
-  path: "/trade-planner",
-  getParentRoute: () => rootRoute,
-} as any);
-
-const IndexRoute = IndexImport.update({
-  id: "/",
-  path: "/",
-  getParentRoute: () => rootRoute,
-} as any);
-
-const SymbolsSymbolIdRoute = SymbolsSymbolIdImport.update({
-  id: "/symbols/$symbolId",
-  path: "/symbols/$symbolId",
-  getParentRoute: () => rootRoute,
-} as any);
-
-// Populate the FileRoutesByPath interface
-
-declare module "@tanstack/react-router" {
-  interface FileRoutesByPath {
-    "/": {
-      id: "/";
-      path: "/";
-      fullPath: "/";
-      preLoaderRoute: typeof IndexImport;
-      parentRoute: typeof rootRoute;
-    };
-    "/settings": {
-      id: "/settings";
-      path: "/settings";
-      fullPath: "/settings";
-      preLoaderRoute: typeof SettingsImport;
-      parentRoute: typeof rootRoute;
-    };
-    "/opportunities": {
-      id: "/opportunities";
-      path: "/opportunities";
-      fullPath: "/opportunities";
-      preLoaderRoute: typeof OpportunitiesImport;
-      parentRoute: typeof rootRoute;
-    };
-    "/news-feed": {
-      id: "/news-feed";
-      path: "/news-feed";
-      fullPath: "/news-feed";
-      preLoaderRoute: typeof NewsFeedImport;
-      parentRoute: typeof rootRoute;
-    };
-    "/mode-analysis": {
-      id: "/mode-analysis";
-      path: "/mode-analysis";
-      fullPath: "/mode-analysis";
-      preLoaderRoute: typeof ModeAnalysisImport;
-      parentRoute: typeof rootRoute;
-    };
-    "/market-regime": {
-      id: "/market-regime";
-      path: "/market-regime";
-      fullPath: "/market-regime";
-      preLoaderRoute: typeof MarketRegimeImport;
-      parentRoute: typeof rootRoute;
-    };
-    "/journal": {
-      id: "/journal";
-      path: "/journal";
-      fullPath: "/journal";
-      preLoaderRoute: typeof JournalImport;
-      parentRoute: typeof rootRoute;
-    };
-    "/trade-planner": {
-      id: "/trade-planner";
-      path: "/trade-planner";
-      fullPath: "/trade-planner";
-      preLoaderRoute: typeof TradePlannerImport;
-      parentRoute: typeof rootRoute;
-    };
-    "/symbols/$symbolId": {
-      id: "/symbols/$symbolId";
-      path: "/symbols/$symbolId";
-      fullPath: "/symbols/$symbolId";
-      preLoaderRoute: typeof SymbolsSymbolIdImport;
-      parentRoute: typeof rootRoute;
-    };
-  }
-}
-
-// Create and export the route tree
+const TradePlannerRoute = TradePlannerRouteImport.update({
+  id: '/trade-planner',
+  path: '/trade-planner',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SettingsRoute = SettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const OpportunitiesRoute = OpportunitiesRouteImport.update({
+  id: '/opportunities',
+  path: '/opportunities',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const NewsFeedRoute = NewsFeedRouteImport.update({
+  id: '/news-feed',
+  path: '/news-feed',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ModeAnalysisRoute = ModeAnalysisRouteImport.update({
+  id: '/mode-analysis',
+  path: '/mode-analysis',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const MarketRegimeRoute = MarketRegimeRouteImport.update({
+  id: '/market-regime',
+  path: '/market-regime',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const JournalRoute = JournalRouteImport.update({
+  id: '/journal',
+  path: '/journal',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const GroupingRoute = GroupingRouteImport.update({
+  id: '/grouping',
+  path: '/grouping',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const IndexRoute = IndexRouteImport.update({
+  id: '/',
+  path: '/',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const SymbolsSymbolIdRoute = SymbolsSymbolIdRouteImport.update({
+  id: '/symbols/$symbolId',
+  path: '/symbols/$symbolId',
+  getParentRoute: () => rootRouteImport,
+} as any)
 
 export interface FileRoutesByFullPath {
-  "/": typeof IndexRoute;
-  "/settings": typeof SettingsRoute;
-  "/opportunities": typeof OpportunitiesRoute;
-  "/news-feed": typeof NewsFeedRoute;
-  "/mode-analysis": typeof ModeAnalysisRoute;
-  "/market-regime": typeof MarketRegimeRoute;
-  "/journal": typeof JournalRoute;
-  "/trade-planner": typeof TradePlannerRoute;
-  "/symbols/$symbolId": typeof SymbolsSymbolIdRoute;
+  '/': typeof IndexRoute
+  '/grouping': typeof GroupingRoute
+  '/journal': typeof JournalRoute
+  '/market-regime': typeof MarketRegimeRoute
+  '/mode-analysis': typeof ModeAnalysisRoute
+  '/news-feed': typeof NewsFeedRoute
+  '/opportunities': typeof OpportunitiesRoute
+  '/settings': typeof SettingsRoute
+  '/trade-planner': typeof TradePlannerRoute
+  '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
 }
-
 export interface FileRoutesByTo {
-  "/": typeof IndexRoute;
-  "/settings": typeof SettingsRoute;
-  "/opportunities": typeof OpportunitiesRoute;
-  "/news-feed": typeof NewsFeedRoute;
-  "/mode-analysis": typeof ModeAnalysisRoute;
-  "/market-regime": typeof MarketRegimeRoute;
-  "/journal": typeof JournalRoute;
-  "/trade-planner": typeof TradePlannerRoute;
-  "/symbols/$symbolId": typeof SymbolsSymbolIdRoute;
+  '/': typeof IndexRoute
+  '/grouping': typeof GroupingRoute
+  '/journal': typeof JournalRoute
+  '/market-regime': typeof MarketRegimeRoute
+  '/mode-analysis': typeof ModeAnalysisRoute
+  '/news-feed': typeof NewsFeedRoute
+  '/opportunities': typeof OpportunitiesRoute
+  '/settings': typeof SettingsRoute
+  '/trade-planner': typeof TradePlannerRoute
+  '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
 }
-
 export interface FileRoutesById {
-  __root__: typeof rootRoute;
-  "/": typeof IndexRoute;
-  "/settings": typeof SettingsRoute;
-  "/opportunities": typeof OpportunitiesRoute;
-  "/news-feed": typeof NewsFeedRoute;
-  "/mode-analysis": typeof ModeAnalysisRoute;
-  "/market-regime": typeof MarketRegimeRoute;
-  "/journal": typeof JournalRoute;
-  "/trade-planner": typeof TradePlannerRoute;
-  "/symbols/$symbolId": typeof SymbolsSymbolIdRoute;
+  __root__: typeof rootRouteImport
+  '/': typeof IndexRoute
+  '/grouping': typeof GroupingRoute
+  '/journal': typeof JournalRoute
+  '/market-regime': typeof MarketRegimeRoute
+  '/mode-analysis': typeof ModeAnalysisRoute
+  '/news-feed': typeof NewsFeedRoute
+  '/opportunities': typeof OpportunitiesRoute
+  '/settings': typeof SettingsRoute
+  '/trade-planner': typeof TradePlannerRoute
+  '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
 }
-
 export interface FileRouteTypes {
-  fileRoutesByFullPath: FileRoutesByFullPath;
-  fileRoutesByTo: FileRoutesByTo;
-  fileRoutesById: FileRoutesById;
+  fileRoutesByFullPath: FileRoutesByFullPath
+  fullPaths:
+    | '/'
+    | '/grouping'
+    | '/journal'
+    | '/market-regime'
+    | '/mode-analysis'
+    | '/news-feed'
+    | '/opportunities'
+    | '/settings'
+    | '/trade-planner'
+    | '/symbols/$symbolId'
+  fileRoutesByTo: FileRoutesByTo
+  to:
+    | '/'
+    | '/grouping'
+    | '/journal'
+    | '/market-regime'
+    | '/mode-analysis'
+    | '/news-feed'
+    | '/opportunities'
+    | '/settings'
+    | '/trade-planner'
+    | '/symbols/$symbolId'
+  id:
+    | '__root__'
+    | '/'
+    | '/grouping'
+    | '/journal'
+    | '/market-regime'
+    | '/mode-analysis'
+    | '/news-feed'
+    | '/opportunities'
+    | '/settings'
+    | '/trade-planner'
+    | '/symbols/$symbolId'
+  fileRoutesById: FileRoutesById
+}
+export interface RootRouteChildren {
+  IndexRoute: typeof IndexRoute
+  GroupingRoute: typeof GroupingRoute
+  JournalRoute: typeof JournalRoute
+  MarketRegimeRoute: typeof MarketRegimeRoute
+  ModeAnalysisRoute: typeof ModeAnalysisRoute
+  NewsFeedRoute: typeof NewsFeedRoute
+  OpportunitiesRoute: typeof OpportunitiesRoute
+  SettingsRoute: typeof SettingsRoute
+  TradePlannerRoute: typeof TradePlannerRoute
+  SymbolsSymbolIdRoute: typeof SymbolsSymbolIdRoute
 }
 
-export interface RootRouteChildren {
-  IndexRoute: typeof IndexRoute;
-  SettingsRoute: typeof SettingsRoute;
-  OpportunitiesRoute: typeof OpportunitiesRoute;
-  NewsFeedRoute: typeof NewsFeedRoute;
-  ModeAnalysisRoute: typeof ModeAnalysisRoute;
-  MarketRegimeRoute: typeof MarketRegimeRoute;
-  JournalRoute: typeof JournalRoute;
-  TradePlannerRoute: typeof TradePlannerRoute;
-  SymbolsSymbolIdRoute: typeof SymbolsSymbolIdRoute;
+declare module '@tanstack/react-router' {
+  interface FileRoutesByPath {
+    '/trade-planner': {
+      id: '/trade-planner'
+      path: '/trade-planner'
+      fullPath: '/trade-planner'
+      preLoaderRoute: typeof TradePlannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/settings': {
+      id: '/settings'
+      path: '/settings'
+      fullPath: '/settings'
+      preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/opportunities': {
+      id: '/opportunities'
+      path: '/opportunities'
+      fullPath: '/opportunities'
+      preLoaderRoute: typeof OpportunitiesRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/news-feed': {
+      id: '/news-feed'
+      path: '/news-feed'
+      fullPath: '/news-feed'
+      preLoaderRoute: typeof NewsFeedRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/mode-analysis': {
+      id: '/mode-analysis'
+      path: '/mode-analysis'
+      fullPath: '/mode-analysis'
+      preLoaderRoute: typeof ModeAnalysisRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/market-regime': {
+      id: '/market-regime'
+      path: '/market-regime'
+      fullPath: '/market-regime'
+      preLoaderRoute: typeof MarketRegimeRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/journal': {
+      id: '/journal'
+      path: '/journal'
+      fullPath: '/journal'
+      preLoaderRoute: typeof JournalRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/grouping': {
+      id: '/grouping'
+      path: '/grouping'
+      fullPath: '/grouping'
+      preLoaderRoute: typeof GroupingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/': {
+      id: '/'
+      path: '/'
+      fullPath: '/'
+      preLoaderRoute: typeof IndexRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/symbols/$symbolId': {
+      id: '/symbols/$symbolId'
+      path: '/symbols/$symbolId'
+      fullPath: '/symbols/$symbolId'
+      preLoaderRoute: typeof SymbolsSymbolIdRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+  }
 }
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  SettingsRoute: SettingsRoute,
-  OpportunitiesRoute: OpportunitiesRoute,
-  NewsFeedRoute: NewsFeedRoute,
-  ModeAnalysisRoute: ModeAnalysisRoute,
-  MarketRegimeRoute: MarketRegimeRoute,
+  GroupingRoute: GroupingRoute,
   JournalRoute: JournalRoute,
+  MarketRegimeRoute: MarketRegimeRoute,
+  ModeAnalysisRoute: ModeAnalysisRoute,
+  NewsFeedRoute: NewsFeedRoute,
+  OpportunitiesRoute: OpportunitiesRoute,
+  SettingsRoute: SettingsRoute,
   TradePlannerRoute: TradePlannerRoute,
   SymbolsSymbolIdRoute: SymbolsSymbolIdRoute,
-};
-
-export const routeTree = rootRoute
+}
+export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)
-  ._addFileTypes<FileRouteTypes>();
+  ._addFileTypes<FileRouteTypes>()

@@ -61,6 +61,10 @@ export const api = {
     return request<{ message: string }>("/news/fetch", { method: "POST" });
   },
 
+  getNewsGrouped() {
+    return request<Record<string, import("./types/trading").NewsArticleRef[]>>("/news/grouped");
+  },
+
   // ─── Config ────────────────────────────────────────────────────────
   getConfig() {
     return request<import("./types/trading").SystemConfig>("/config");
