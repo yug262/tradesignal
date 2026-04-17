@@ -1,7 +1,10 @@
 """News API router — merged filter + pagination endpoint."""
 
+import httpx
+import json
 from fastapi import APIRouter, Query
 from typing import Optional
+from datetime import datetime
 
 router = APIRouter(prefix="/api/news", tags=["news"])
 
@@ -9,6 +12,17 @@ router = APIRouter(prefix="/api/news", tags=["news"])
 def _get_store():
     from main import app_state
     return app_state
+
+
+def iso_to_ms(iso_str: Optional[str]) -> int:
+    if not iso_str:
+        return 0
+    try:
+        # Handle the format like "2026-04-17T16:00:00+05:30"
+        dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+        return int(dt.timestamp() * 1000)
+    except Exception:
+        return 0
 
 
 @router.get("")
@@ -69,8 +83,10 @@ def get_news_by_id(article_id: str):
 
 @router.post("/fetch")
 def fetch_news():
-    """Trigger a news fetch (loads mock data or returns live-endpoint placeholder)."""
+    """Trigger a news fetch (loads mock data or fetches from live endpoint)."""
     state = _get_store()
+    from models import NewsArticleRef
+
     if state.config.use_mock_data:
         from mock_data import get_mock_articles
         articles = get_mock_articles()
@@ -78,4 +94,48 @@ def fetch_news():
             state.news_store[art.id] = art
         return {"message": f"Loaded {len(articles)} mock articles"}
     else:
-        return {"message": "Live endpoint not configured"}
+        url = state.config.news_endpoint_url
+        try:
+            with httpx.Client(timeout=30.0) as client:
+                response = client.get(url)
+                response.raise_for_status()
+                data = response.json()
+                
+                external_articles = data.get("data", [])
+                count = 0
+                for item in external_articles:
+                    # Filter by relevance: only "High Useful" and "Useful"
+                    relevance = item.get("news_relevance", "unknown")
+                    if relevance not in ["High Useful", "Useful"]:
+                        continue
+
+                    # Map external fields to NewsArticleRef
+                    affected_stocks = item.get("affected_stocks", {})
+                    symbols = list(set(
+                        affected_stocks.get("direct", []) + 
+                        affected_stocks.get("indirect", [])
+                    ))
+                    
+                    art = NewsArticleRef(
+                        id=str(item.get("id")),
+                        title=item.get("title", ""),
+                        description=item.get("description", ""),
+                        source=item.get("source", ""),
+                        published_at=iso_to_ms(item.get("published")),
+                        analyzed_at=iso_to_ms(item.get("analyzed_at")),
+                        image_url=item.get("image_url"),
+                        impact_score=float(item.get("impact_score") or 0.0),
+                        impact_summary=item.get("impact_summary") or "",
+                        executive_summary=item.get("executive_summary") or "",
+                        news_relevance=item.get("news_relevance", "unknown"),
+                        news_category=item.get("news_category", "other"),
+                        affected_symbols=symbols,
+                        processing_status="analyzed" if item.get("analyzed") else "new",
+                        raw_analysis_data=json.dumps(item.get("analysis_data"))
+                    )
+                    state.news_store[art.id] = art
+                    count += 1
+                
+                return {"message": f"Successfully fetched {count} articles from live endpoint"}
+        except Exception as e:
+            return {"message": f"Error fetching from live endpoint: {str(e)}"}

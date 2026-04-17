@@ -31,9 +31,9 @@ class SystemConfig(BaseModel):
     max_open_positions: int = 5
     max_daily_loss_pct: float = 3.0
     min_rr: float = 1.5
-    news_endpoint_url: str = "https://api.example.com/news"
+    news_endpoint_url: str = "https://destiny-luxury-douche.ngrok-free.dev/api/indian_news?limit=1000&today_only=false&exclude_noisy=false&analyzed_only=false&offset=0"
     polling_interval_mins: int = 5
-    use_mock_data: bool = True
+    use_mock_data: bool = False
     processing_mode: str = "pre_market"
 
 
