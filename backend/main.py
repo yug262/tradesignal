@@ -47,11 +47,11 @@ app.include_router(news.router)
 app.include_router(config.router)
 app.include_router(dashboard.router)
 
-if __name__ == "__main__":
-    import uvicorn
-    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
-
-
 @app.get("/api/health")
 def health_check():
     return {"status": "ok", "version": "1.0.0"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run("main:app", host="127.0.0.1", port=8000, reload=True)
