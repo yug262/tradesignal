@@ -2,9 +2,14 @@
 
 import httpx
 import json
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Query, Depends
+from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
+
+from database import get_db
+import db_models
+from models import NewsArticleRef
 
 router = APIRouter(prefix="/api/news", tags=["news"])
 
@@ -32,67 +37,129 @@ def get_news(
     symbol: Optional[str] = Query(None),
     category: Optional[str] = Query(None),
     min_impact: Optional[float] = Query(None),
+    db: Session = Depends(get_db)
 ):
     """Return a paginated, optionally filtered list of news articles sorted by published_at desc."""
-    state = _get_store()
-    articles = list(state.news_store.values())
+    query = db.query(db_models.NewsArticle)
 
     # Apply filters
     if symbol:
-        articles = [a for a in articles if symbol in a.affected_symbols]
+        query = query.filter(db_models.NewsArticle.affected_symbols.any(symbol))
     if category:
-        articles = [a for a in articles if a.news_category == category]
+        query = query.filter(db_models.NewsArticle.news_category == category)
     if min_impact is not None:
-        articles = [a for a in articles if a.impact_score >= min_impact]
+        query = query.filter(db_models.NewsArticle.impact_score >= min_impact)
 
-    # Sort by published_at descending
-    articles.sort(key=lambda a: a.published_at, reverse=True)
+    # Count total
+    total = query.count()
+    
+    # Sort and paginate
+    articles = query.order_by(db_models.NewsArticle.published_at.desc()) \
+                    .offset(page * page_size) \
+                    .limit(page_size) \
+                    .all()
 
-    total = len(articles)
-    start = page * page_size
-    if start >= total:
-        return {"items": [], "page": page, "page_size": page_size, "total": total, "has_more": False}
+    items = []
+    for a in articles:
+        # Convert DB model to Pydantic
+        items.append({
+            "id": a.id,
+            "title": a.title,
+            "description": a.description,
+            "source": a.source,
+            "published_at": a.published_at,
+            "analyzed_at": a.analyzed_at,
+            "image_url": a.image_url,
+            "impact_score": a.impact_score,
+            "impact_summary": a.impact_summary,
+            "executive_summary": a.executive_summary,
+            "news_relevance": a.news_relevance,
+            "news_category": a.news_category,
+            "affected_symbols": a.affected_symbols,
+            "processing_status": a.processing_status,
+            "raw_analysis_data": a.raw_analysis_data if isinstance(a.raw_analysis_data, str) else json.dumps(a.raw_analysis_data)
+        })
 
-    end = min(start + page_size, total)
-    items = articles[start:end]
     return {
-        "items": [a.model_dump() for a in items],
+        "items": items,
         "page": page,
         "page_size": page_size,
         "total": total,
-        "has_more": end < total,
+        "has_more": (page + 1) * page_size < total,
     }
 
 
 @router.get("/count")
-def get_total_news_count():
+def get_total_news_count(db: Session = Depends(get_db)):
     """Return total count of stored articles."""
-    state = _get_store()
-    return {"count": len(state.news_store)}
+    count = db.query(db_models.NewsArticle).count()
+    return {"count": count}
 
 
 @router.get("/{article_id}")
-def get_news_by_id(article_id: str):
+def get_news_by_id(article_id: str, db: Session = Depends(get_db)):
     """Lookup a single article by id."""
-    state = _get_store()
-    article = state.news_store.get(article_id)
+    article = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.id == article_id).first()
     if article is None:
         return None
-    return article.model_dump()
+    
+    return {
+        "id": article.id,
+        "title": article.title,
+        "description": article.description,
+        "source": article.source,
+        "published_at": article.published_at,
+        "analyzed_at": article.analyzed_at,
+        "image_url": article.image_url,
+        "impact_score": article.impact_score,
+        "impact_summary": article.impact_summary,
+        "executive_summary": article.executive_summary,
+        "news_relevance": article.news_relevance,
+        "news_category": article.news_category,
+        "affected_symbols": article.affected_symbols,
+        "processing_status": article.processing_status,
+        "raw_analysis_data": article.raw_analysis_data if isinstance(article.raw_analysis_data, str) else json.dumps(article.raw_analysis_data)
+    }
 
 
 @router.post("/fetch")
-def fetch_news():
+def fetch_news(db: Session = Depends(get_db)):
     """Trigger a news fetch (loads mock data or fetches from live endpoint)."""
     state = _get_store()
-    from models import NewsArticleRef
 
     if state.config.use_mock_data:
         from mock_data import get_mock_articles
-        articles = get_mock_articles()
-        for art in articles:
-            state.news_store[art.id] = art
-        return {"message": f"Loaded {len(articles)} mock articles"}
+        articles_data = get_mock_articles()
+        count = 0
+        for art in articles_data:
+            # Filter by impact score >= 5
+            if art.impact_score < 5.0:
+                continue
+
+            # Check if exists
+            existing = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.id == art.id).first()
+            if not existing:
+                db_art = db_models.NewsArticle(
+                    id=art.id,
+                    title=art.title,
+                    description=art.description,
+                    source=art.source,
+                    published_at=art.published_at,
+                    analyzed_at=art.analyzed_at,
+                    image_url=art.image_url,
+                    impact_score=art.impact_score,
+                    impact_summary=art.impact_summary,
+                    executive_summary=art.executive_summary,
+                    news_relevance=art.news_relevance,
+                    news_category=art.news_category,
+                    affected_symbols=art.affected_symbols,
+                    processing_status=art.processing_status,
+                    raw_analysis_data=art.raw_analysis_data
+                )
+                db.add(db_art)
+                count += 1
+        db.commit()
+        return {"message": f"Loaded {count} new mock articles (Impact >= 5.0) to database"}
     else:
         url = state.config.news_endpoint_url
         try:
@@ -104,38 +171,46 @@ def fetch_news():
                 external_articles = data.get("data", [])
                 count = 0
                 for item in external_articles:
-                    # Filter by relevance: only "High Useful" and "Useful"
-                    relevance = item.get("news_relevance", "unknown")
-                    if relevance not in ["High Useful", "Useful"]:
+                    # Filter by impact score >= 5
+                    impact_score = float(item.get("impact_score") or 0.0)
+                    if impact_score < 5.0:
                         continue
 
-                    # Map external fields to NewsArticleRef
+                    article_id = str(item.get("id"))
+                    # Check if exists
+                    existing = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.id == article_id).first()
+                    if existing:
+                        continue
+
+                    # Map external fields to NewsArticle
                     affected_stocks = item.get("affected_stocks", {})
                     symbols = list(set(
                         affected_stocks.get("direct", []) + 
                         affected_stocks.get("indirect", [])
                     ))
                     
-                    art = NewsArticleRef(
-                        id=str(item.get("id")),
+                    db_art = db_models.NewsArticle(
+                        id=article_id,
                         title=item.get("title", ""),
                         description=item.get("description", ""),
                         source=item.get("source", ""),
                         published_at=iso_to_ms(item.get("published")),
                         analyzed_at=iso_to_ms(item.get("analyzed_at")),
                         image_url=item.get("image_url"),
-                        impact_score=float(item.get("impact_score") or 0.0),
+                        impact_score=impact_score,
                         impact_summary=item.get("impact_summary") or "",
                         executive_summary=item.get("executive_summary") or "",
                         news_relevance=item.get("news_relevance", "unknown"),
                         news_category=item.get("news_category", "other"),
                         affected_symbols=symbols,
                         processing_status="analyzed" if item.get("analyzed") else "new",
-                        raw_analysis_data=json.dumps(item.get("analysis_data"))
+                        raw_analysis_data=item.get("analysis_data") # SQLAlchemy handles JSON
                     )
-                    state.news_store[art.id] = art
+                    db.add(db_art)
                     count += 1
                 
-                return {"message": f"Successfully fetched {count} articles from live endpoint"}
+                db.commit()
+                return {"message": f"Successfully fetched and saved {count} new articles to database"}
         except Exception as e:
+            db.rollback()
             return {"message": f"Error fetching from live endpoint: {str(e)}"}
