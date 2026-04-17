@@ -52,6 +52,10 @@ export async function apiTriggerFetch(): Promise<string> {
   return res.message;
 }
 
+export async function apiGetNewsGrouped(): Promise<Record<string, NewsArticleRef[]>> {
+  return api.getNewsGrouped();
+}
+
 // ─── Dashboard ───────────────────────────────────────────────────────────────
 
 export async function apiGetDashboardSummary(): Promise<DashboardSummary | null> {
