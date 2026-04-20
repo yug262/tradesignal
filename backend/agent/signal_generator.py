@@ -63,12 +63,12 @@ def run_full_analysis(db: Session = None) -> dict:
 
         # -- Step 1: Optionally fetch fresh news --------------------------
         config = _get_store().config
-        if not config.use_mock_data and config.news_endpoint_url:
+        if config.news_endpoint_url:
             print("\n[STEP 1] Fetching fresh news from endpoint...")
             new_count = trigger_news_fetch(config.news_endpoint_url, db)
             print(f"   [OK] Saved {new_count} new articles")
         else:
-            print("\n[STEP 1] Using existing news in DB (mock mode or no endpoint)")
+            print("\n[STEP 1] Using existing news in DB (no endpoint)")
 
         # -- Step 2: Get recent news grouped by symbol --------------------
         # Uses smart market calendar — automatically handles weekends & holidays
@@ -166,6 +166,12 @@ def run_full_analysis(db: Session = None) -> dict:
                 summary["no_trade"] += 1
 
             # 4e. Save to DB
+            # Remove any existing signals for this symbol on this market date to avoid duplicates
+            db.query(db_models.DBTradeSignal).filter(
+                db_models.DBTradeSignal.symbol == sym,
+                db_models.DBTradeSignal.market_date == market_date
+            ).delete(synchronize_session=False)
+
             db_signal = db_models.DBTradeSignal(
                 id=signal_id,
                 symbol=sym,
