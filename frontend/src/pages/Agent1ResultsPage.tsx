@@ -3,7 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from "@/components/ui/accordion";
 import { Badge } from "@/components/ui/badge";
-import { api } from "@/lib/api";
+import { api } from "@/backend";
 import { useMutation } from "@tanstack/react-query";
 import { Loader2 } from "lucide-react";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -61,7 +61,7 @@ export function Agent1ResultsPage() {
   const [filter, setFilter] = useState<DecisionFilter>("ALL");
 
   const mutation = useMutation<Agent1Result, Error>({
-    mutationFn: () => api.post("/api/agent/run").then((res) => res.data),
+    mutationFn: () => api.triggerAgentRun(),
     onSuccess: (data) => {
       // Sort signals: WATCH > others > IGNORE/STALE, then by confidence
       const sortedSignals = [...data.signals].sort((a, b) => {
@@ -101,12 +101,10 @@ export function Agent1ResultsPage() {
 
   const getSignalTypeBadgeVariant = (signalType: string) => {
     switch (signalType?.toUpperCase()) {
-      case "BUY":
-        return "success";
-      case "SELL":
-        return "destructive";
-      case "HOLD":
+      case "WATCH":
         return "secondary";
+      case "NO_TRADE":
+        return "destructive";
       default:
         return "outline";
     }
@@ -199,11 +197,11 @@ export function Agent1ResultsPage() {
                           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             <div className="space-y-4">
                               <InfoSection title="Decision" value={signal.reasoning.decision} />
-                              <InfoSection title="Confidence" value={(signal.confidence * 100).toFixed(2) + "%"} />
+                              <InfoSection title="Confidence" value={signal.confidence + "%"} />
                               <InfoSection title="Direction Bias" value={signal.reasoning.direction_bias} />
                               <InfoSection title="Gap Expectation" value={signal.reasoning.gap_expectation} />
                               <InfoSection title="Event Strength" value={signal.reasoning.event_strength} />
-                              <InfoSection title="Trade Preference" value={signal.reasoning.trade_mode} />
+                              <InfoSection title="Trade Preference" value={signal.reasoning.trade_preference} />
                             </div>
                             <div className="space-y-4">
                                <InfoSection title="Final Summary" value={signal.reasoning.final_summary} />

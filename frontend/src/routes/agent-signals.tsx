@@ -91,9 +91,9 @@ function AgentSignalsPage() {
   });
 
   const confidenceColor = (conf: number) => {
-    if (conf >= 0.8) return "text-emerald-400";
-    if (conf >= 0.6) return "text-amber-400";
-    if (conf >= 0.4) return "text-orange-400";
+    if (conf >= 80) return "text-emerald-400";
+    if (conf >= 60) return "text-amber-400";
+    if (conf >= 40) return "text-orange-400";
     return "text-red-400";
   };
 
@@ -296,7 +296,7 @@ function AgentSignalsPage() {
                     <div className="flex items-center gap-5">
                       <div className="text-center">
                         <div className={cn("text-lg font-bold font-mono tabular-nums", confidenceColor(sig.confidence || 0))}>
-                          {Math.round((sig.confidence || 0) * 100)}%
+                          {sig.confidence || 0}%
                         </div>
                         <div className="font-mono text-[7px] text-muted-foreground uppercase tracking-widest">Confidence</div>
                       </div>

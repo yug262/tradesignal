@@ -108,7 +108,7 @@ Respond with this exact JSON structure:
   "event_summary": "One simple sentence — what happened? Write it so anyone can understand in 3 seconds.",
   "event_strength": "STRONG" or "MODERATE" or "WEAK",
   "directness": "DIRECT" or "INDIRECT" or "WEAK" or "NONE",
-  "confidence": 0.0 to 1.0,
+  "confidence": 0 to 100,
   "why_it_matters": "2-3 simple sentences — why should a trader care about this? How does it affect the company's business or stock price? No jargon.",
   "key_drivers": ["simple reason 1 why this could work", "simple reason 2"],
   "risks": ["simple risk 1 — what could go wrong", "simple risk 2"],
@@ -219,9 +219,16 @@ def analyze_stock(
         except Exception:
             pass
 
-    # Detect distinct event types from titles
-    titles = [a.get("title", "") for a in articles]
-    distinct_events = len(set(t.split(":")[0].strip().lower() for t in titles if t))
+    # Better distinct event logic: Group by first 4 words of title to avoid minor variations
+    titles = [a.get("title", "").strip() for a in articles if a.get("title")]
+    unique_topics = set()
+    for t in titles:
+        # Normalize and take first 4 words as a signature
+        sig = " ".join(t.lower().replace(":", " ").split()[:4])
+        if sig:
+            unique_topics.add(sig)
+    
+    distinct_events = len(unique_topics) if unique_topics else (1 if articles else 0)
     has_multiple = distinct_events >= 2
 
     # Company name from stock data or symbol
@@ -276,6 +283,25 @@ def analyze_stock(
         text = text.strip()
 
         result = json.loads(text)
+        
+        # Normalize confidence to integer 0-100
+        conf = result.get("confidence", 0)
+        try:
+            if isinstance(conf, (float, int)):
+                if 0 <= conf <= 1.0 and isinstance(conf, float):
+                    result["confidence"] = int(conf * 100)
+                else:
+                    result["confidence"] = int(conf)
+            elif isinstance(conf, str):
+                result["confidence"] = int(float(conf))
+            else:
+                result["confidence"] = 50
+        except:
+            result["confidence"] = 50
+            
+        # Clamp confidence
+        result["confidence"] = max(0, min(100, result["confidence"]))
+        
         result["_source"] = "gemini"
         result["_model"] = MODEL_NAME
         return result
@@ -299,7 +325,7 @@ def _fallback_analysis(symbol: str, articles: list[dict], stock_data: dict) -> d
         "event_summary": "Gemini API unavailable — cannot assess event.",
         "event_strength": "WEAK",
         "directness": "NONE",
-        "confidence": 0.0,
+        "confidence": 0,
         "why_it_matters": "Cannot determine without AI reasoning.",
         "key_drivers": [],
         "risks": ["No AI analysis available"],
