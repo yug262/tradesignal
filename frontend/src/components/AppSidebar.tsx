@@ -36,8 +36,13 @@ const NAV_ITEMS: NavItem[] = [
   },
   {
     path: "/agent-signals",
-    label: "Trade Signal",
+    label: "Trade Signal (A1)",
     icon: <Brain size={16} />,
+  },
+  {
+    path: "/market-open",
+    label: "Market Open (A2)",
+    icon: <TrendingUp size={16} />,
   },
   { path: "/news-feed", label: "News Feed", icon: <Newspaper size={16} /> },
   {

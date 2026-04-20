@@ -187,7 +187,8 @@ def run_full_analysis(db: Session = None) -> dict:
                 stock_snapshot=stock,
                 generated_at=_now_ms(),
                 market_date=market_date,
-                status="active",
+                status="pending_confirmation",
+                confirmation_status="pending",
             )
             db.add(db_signal)
 

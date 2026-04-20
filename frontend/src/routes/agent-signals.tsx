@@ -33,8 +33,10 @@ function AgentSignalsPage() {
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [running, setRunning] = useState(false);
+  const [runningConfirm, setRunningConfirm] = useState(false);
   const [filter, setFilter] = useState<string>("ALL");
   const [modeFilter, setModeFilter] = useState<string>("ALL");
+  const [confFilter, setConfFilter] = useState<string>("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
   const loadSignals = useCallback(async () => {
@@ -69,6 +71,18 @@ function AgentSignalsPage() {
     }
   };
 
+  const triggerConfirm = async () => {
+    setRunningConfirm(true);
+    try {
+      await api.triggerConfirmationRun();
+      await loadSignals();
+    } catch (err) {
+      console.error("Agent confirm run failed", err);
+    } finally {
+      setRunningConfirm(false);
+    }
+  };
+
   const formatNumber = (val: number | null) => {
     if (val === null || val === undefined) return "—";
     return val.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -80,6 +94,7 @@ function AgentSignalsPage() {
   const filtered = signals.filter((s: any) => {
     if (filter !== "ALL" && s.signal_type !== filter) return false;
     if (modeFilter !== "ALL" && s.trade_mode !== modeFilter) return false;
+    if (confFilter !== "ALL" && s.confirmation_status !== confFilter.toLowerCase()) return false;
     return true;
   });
 
@@ -106,6 +121,15 @@ function AgentSignalsPage() {
     if (conf >= 0.6) return "text-amber-400";
     if (conf >= 0.4) return "text-orange-400";
     return "text-red-400";
+  };
+
+  const confirmationBadge = (status: string) => {
+    switch (status) {
+      case "confirmed": return <Badge variant="outline" className="font-mono text-[9px] border-emerald-500/30 text-emerald-400 bg-emerald-500/5"><CheckCircle2 size={10} className="mr-1"/> CONFIRMED</Badge>;
+      case "revised": return <Badge variant="outline" className="font-mono text-[9px] border-amber-500/30 text-amber-400 bg-amber-500/5"><RefreshCw size={10} className="mr-1"/> REVISED</Badge>;
+      case "invalidated": return <Badge variant="outline" className="font-mono text-[9px] border-red-500/30 text-red-400 bg-red-500/5"><Ban size={10} className="mr-1"/> INVALIDATED</Badge>;
+      default: return <Badge variant="outline" className="font-mono text-[9px] border-blue-500/30 text-blue-400 bg-blue-500/5"><Clock size={10} className="mr-1"/> PENDING OPEN</Badge>;
+    }
   };
 
   return (
@@ -144,7 +168,7 @@ function AgentSignalsPage() {
             {running ? (
               <><RefreshCw size={10} className="mr-1 animate-spin" /> Running...</>
             ) : (
-              <><Play size={10} className="mr-1" /> Run Agent</>
+              <><Play size={10} className="mr-1" /> Run Agent 1</>
             )}
           </Button>
         </div>
@@ -173,24 +197,27 @@ function AgentSignalsPage() {
       </div>
 
       {/* Filters */}
-      <div className="flex items-center gap-2 flex-wrap">
-        <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest mr-1">Mode:</span>
-        {["ALL", "INTRADAY", "DELIVERY"].map((m) => (
-          <Badge
-            key={m}
-            variant="outline"
-            className={cn(
-              "font-mono text-[9px] px-2 py-0.5 cursor-pointer transition-all",
-              modeFilter === m
-                ? "bg-primary/10 border-primary/30 text-primary"
-                : "border-border text-muted-foreground hover:border-primary/30"
-            )}
-            onClick={() => setModeFilter(m)}
-          >
-            {m}
-          </Badge>
-        ))}
-        <span className="font-mono text-[9px] text-muted-foreground ml-2">
+      <div className="flex items-center gap-4 flex-wrap">
+        <div className="flex items-center gap-2">
+          <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest mr-1">Mode:</span>
+          {["ALL", "INTRADAY", "DELIVERY"].map((m) => (
+            <Badge
+              key={m}
+              variant="outline"
+              className={cn(
+                "font-mono text-[9px] px-2 py-0.5 cursor-pointer transition-all",
+                modeFilter === m
+                  ? "bg-primary/10 border-primary/30 text-primary"
+                  : "border-border text-muted-foreground hover:border-primary/30"
+              )}
+              onClick={() => setModeFilter(m)}
+            >
+              {m}
+            </Badge>
+          ))}
+        </div>
+
+        <span className="font-mono text-[9px] text-muted-foreground ml-auto">
           Showing {filtered.length} of {signals.length} signals
         </span>
       </div>
