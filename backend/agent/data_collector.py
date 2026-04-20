@@ -202,6 +202,18 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
                 skipped_invalid += 1
                 continue
 
+            raw_stocks = item.get("affected_stocks", [])
+            symbols_list = []
+            if isinstance(raw_stocks, dict):
+                symbols_list.extend(raw_stocks.get("direct", []))
+                symbols_list.extend(raw_stocks.get("indirect", []))
+            elif isinstance(raw_stocks, list):
+                symbols_list.extend(raw_stocks)
+
+            final_symbols = item.get("affected_symbols", symbols_list)
+            if not isinstance(final_symbols, list):
+                final_symbols = []
+
             new_art = db_models.NewsArticle(
                 id=item_id,
                 title=item.get("title", "No Title"),
@@ -214,7 +226,7 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
                 executive_summary=item.get("executive_summary", ""),
                 news_category=item.get("news_category", ""),
                 news_relevance=item.get("news_relevance", ""),
-                affected_symbols=item.get("affected_symbols", []),
+                affected_symbols=final_symbols,
                 raw_analysis_data=item.get("raw_analysis_data", {}),
                 processing_status=item.get("processing_status", "analyzed"),
             )

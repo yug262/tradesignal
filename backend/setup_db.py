@@ -77,7 +77,6 @@ def create_database():
                     min_rr FLOAT DEFAULT 1.5,
                     news_endpoint_url TEXT,
                     polling_interval_mins INTEGER DEFAULT 5,
-                    use_mock_data BOOLEAN DEFAULT FALSE,
                     processing_mode TEXT DEFAULT 'pre_market'
                 );
             """,

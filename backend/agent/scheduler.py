@@ -46,9 +46,6 @@ def _daily_news_fetch_job():
     db = SessionLocal()
     try:
         config = _get_store().config
-        if config.use_mock_data:
-            print("[SCHEDULER] Mock mode enabled -- skipping live news fetch")
-            return
 
         endpoint_url = config.news_endpoint_url
         if not endpoint_url:
