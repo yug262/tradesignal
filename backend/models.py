@@ -3,26 +3,26 @@
 Timestamps are in MILLISECONDS (epoch ms) for safe JS number handling.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, Any
+from pydantic import BaseModel
+from typing import Optional, Any, List
 
 
 class NewsArticleRef(BaseModel):
     id: str
-    title: Optional[str] = "No Title"
+    title: str
     description: Optional[str] = ""
-    source: Optional[str] = "Unknown"
-    published_at: Optional[int] = 0          # milliseconds since epoch
-    analyzed_at: Optional[int] = None           # milliseconds since epoch
+    source: str
+    published_at: int
+    analyzed_at: Optional[int] = None
     image_url: Optional[str] = None
-    impact_score: Optional[float] = 0.0        # 1.0–10.0
+    impact_score: float = 0.0
     impact_summary: Optional[str] = ""
     executive_summary: Optional[str] = ""
-    news_relevance: Optional[str] = "low"        # "high" | "medium" | "low"
-    news_category: Optional[str] = "macro"         # "earnings" | "merger" | "regulatory" | "macro" | "product"
-    affected_symbols: Optional[list[str]] = []
-    processing_status: Optional[str] = "pending"     # "pending" | "processed" | "skipped"
-    raw_analysis_data: Optional[Any] = {}     # Can be JSON object or string
+    news_relevance: Optional[str] = "low"
+    news_category: Optional[str] = "other"
+    affected_symbols: Optional[List[str]] = []
+    processing_status: str
+    raw_analysis_data: Any = None
 
 
 class SystemConfig(BaseModel):
@@ -33,7 +33,6 @@ class SystemConfig(BaseModel):
     min_rr: float = 1.5
     news_endpoint_url: str = "https://destiny-luxury-douche.ngrok-free.dev/api/indian_news?limit=1000&today_only=false&exclude_noisy=false&analyzed_only=false&offset=0"
     polling_interval_mins: int = 5
-    use_mock_data: bool = False
     processing_mode: str = "pre_market"
 
 

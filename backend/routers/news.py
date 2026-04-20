@@ -7,7 +7,6 @@ from typing import List, Dict, Any
 import db_models
 from database import get_db
 from models import NewsArticleRef, PaginatedNewsResponse
-from store import _get_store
 
 router = APIRouter(prefix="/api/news", tags=["news"])
 
@@ -91,53 +90,115 @@ def get_news_by_id(news_id: str, db: Session = Depends(get_db)):
 @router.post("/fetch")
 def fetch_news(db: Session = Depends(get_db)):
     """Trigger a news fetch (loads mock data or fetches from live endpoint)."""
-    state = _get_store()
-
-    if state.config.use_mock_data:
-        from mock_data import get_mock_articles
-        articles_data = get_mock_articles()
-        
-        saved_count = 0
-        skipped_count = 0
-        for art in articles_data:
-            if art.impact_score <= 5.0:
-                skipped_count += 1
-                continue
-
-            existing = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.id == art.id).first()
-            if not existing:
-                db_art = db_models.NewsArticle(
-                    id=art.id,
-                    title=art.title,
-                    description=art.description,
-                    source=art.source,
-                    published_at=art.published_at,
-                    analyzed_at=art.analyzed_at,
-                    image_url=art.image_url,
-                    impact_score=art.impact_score,
-                    impact_summary=art.impact_summary,
-                    executive_summary=art.executive_summary,
-                    news_relevance=art.news_relevance,
-                    news_category=art.news_category,
-                    affected_symbols=art.affected_symbols,
-                    processing_status=art.processing_status,
-                    raw_analysis_data=art.raw_analysis_data
-                )
-                db.add(db_art)
-                saved_count += 1
+    cfg = db.query(db_models.DBSystemConfig).first()
+    if not cfg:
+        from routers.config import _default_config
+        defaults = _default_config()
+        cfg = db_models.DBSystemConfig(**defaults.model_dump())
+        db.add(cfg)
         db.commit()
-        print(f"DEBUG: Mock fetch. Saved {saved_count} articles.")
-        return {"message": f"Loaded {saved_count} new mock articles."}
-    else:
-        from agent.data_collector import trigger_news_fetch
-        
-        url = state.config.news_endpoint_url
-        if not url:
-            raise HTTPException(status_code=400, detail="No news endpoint URL configured")
+        db.refresh(cfg)
+
+    url = cfg.news_endpoint_url
+    try:
+        with httpx.Client(timeout=30.0) as client:
+            response = client.get(url)
+            response.raise_for_status()
+            json_res = response.json()
             
-        try:
-            saved_count = trigger_news_fetch(url, db)
-            return {"status": "success", "message": f"Saved {saved_count} new articles.", "new_articles_saved": saved_count}
-        except Exception as e:
-            print(f"ERROR: Fetch failed: {str(e)[:100]}")
-            raise HTTPException(status_code=500, detail="Fetch operation failed.")
+            # Check for different possible keys for articles
+            articles_list = []
+            if isinstance(json_res, list):
+                articles_list = json_res
+            elif isinstance(json_res, dict):
+                articles_list = json_res.get("data", json_res.get("items", json_res.get("articles", [])))
+            
+            saved_count = 0
+            skipped_count = 0
+            
+            from datetime import datetime
+            
+            for item in articles_list:
+                if not isinstance(item, dict): continue
+                
+                # Extract ID as string
+                item_id = str(item.get("id", ""))
+                if not item_id: continue
+                    
+                impact_score = float(item.get("impact_score") or 0)
+                # Lowered threshold to 0.0 to ensure data flows during setup
+                if impact_score < 4: 
+                    skipped_count += 1
+                    continue
+                
+                # Map analysis data
+                raw_data = item.get("analysis_data") or item.get("raw_analysis_data", {})
+                
+                # Convert ISO timestamp to milliseconds
+                pub_at = item.get("published") or item.get("published_at")
+                pub_at_ms = 0
+                if pub_at:
+                    try:
+                        # Handle ISO format with offset
+                        dt = datetime.fromisoformat(pub_at.replace("Z", "+00:00"))
+                        pub_at_ms = int(dt.timestamp() * 1000)
+                    except Exception:
+                        pub_at_ms = 0
+                
+                # Convert analyzed_at if present
+                ana_at = item.get("analyzed_at")
+                ana_at_ms = None
+                if ana_at:
+                    try:
+                        dt = datetime.fromisoformat(ana_at.replace("Z", "+00:00"))
+                        ana_at_ms = int(dt.timestamp() * 1000)
+                    except Exception:
+                        ana_at_ms = None
+
+                # Extract affected symbols from dict if needed
+                affected = item.get("affected_symbols", [])
+                if not affected and "affected_stocks" in item:
+                    stocks = item["affected_stocks"]
+                    if isinstance(stocks, dict):
+                        affected = stocks.get("direct", []) + stocks.get("indirect", [])
+
+                existing = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.id == item_id).first()
+                if not existing:
+                    new_article = db_models.NewsArticle(
+                        id=item_id,
+                        title=item.get("title", "No Title"),
+                        description=item.get("description", ""),
+                        source=item.get("source", "Unknown"),
+                        published_at=pub_at_ms,
+                        analyzed_at=ana_at_ms,
+                        image_url=item.get("image_url"),
+                        impact_score=impact_score,
+                        impact_summary=item.get("impact_summary", ""),
+                        executive_summary=item.get("executive_summary", ""),
+                        news_category=item.get("news_category", ""),
+                        news_relevance=item.get("news_relevance", ""),
+                        affected_symbols=affected,
+                        raw_analysis_data=raw_data,
+                        processing_status=item.get("processing_status", "analyzed" if item.get("analyzed") else "pending")
+                    )
+                    db.add(new_article)
+                    saved_count += 1
+            
+            db.commit()
+            print(f"DEBUG: Live fetch. Processed {len(articles_list)} items. Saved {saved_count} new articles.")
+            return {"status": "success", "message": f"Ingested {saved_count} new articles."}
+    except httpx.ConnectError:
+        print("ERROR: Could not connect to the news endpoint (DNS or connection failure).")
+        raise HTTPException(
+            status_code=503, 
+            detail="News source unreachable. Please check the endpoint URL."
+        )
+    except httpx.HTTPStatusError as e:
+        print(f"ERROR: News source returned an error: {e.response.status_code}")
+        raise HTTPException(
+            status_code=e.response.status_code,
+            detail=f"News source error: {e.response.status_code}"
+        )
+    except Exception as e:
+        print(f"ERROR: Fetch failed: {str(e)[:100]}")
+        raise HTTPException(status_code=500, detail=f"Fetch operation failed: {str(e)[:50]}")

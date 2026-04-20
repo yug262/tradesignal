@@ -7,10 +7,10 @@ import {
 import { cn } from "@/lib/utils";
 import { formatUTC } from "@/lib/utils";
 import { useUIStore } from "@/stores/uiStore";
-import { RefreshCw } from "lucide-react";
+import { Moon, RefreshCw, Sun } from "lucide-react";
 
 export function AppHeader() {
-  const activePageTitle = useUIStore((s) => s.activePageTitle);
+  const { activePageTitle, theme, toggleTheme } = useUIStore();
   const { data: procState } = useProcessingState();
   const { data: summary } = useDashboardSummary();
   const triggerFetch = useTriggerFetch();
@@ -18,9 +18,6 @@ export function AppHeader() {
   const isPolling = procState?.is_polling_active ?? false;
   const systemMode =
     summary?.system_mode ?? procState?.current_mode ?? "PRE-MARKET";
-  const endpointStatus = summary?.endpoint_status ?? "MOCK_DATA";
-  const isMockData =
-    endpointStatus === "MOCK_DATA" || endpointStatus === "mock";
   const isLive = systemMode === "LIVE" || systemMode === "live";
 
   const lastRefresh = summary?.last_refresh
@@ -67,23 +64,12 @@ export function AppHeader() {
           [ {systemMode.toUpperCase()} ]
         </div>
 
-        {/* Endpoint status */}
         <div
-          className={cn(
-            "flex items-center gap-1.5 px-2 py-1 rounded font-mono text-[10px] tracking-wider uppercase border",
-            isMockData
-              ? "bg-chart-3/10 border-chart-3/30 text-chart-3"
-              : "bg-chart-1/10 border-chart-1/30 text-chart-1",
-          )}
+          className="flex items-center gap-1.5 px-2 py-1 rounded font-mono text-[10px] tracking-wider uppercase border bg-chart-1/10 border-chart-1/30 text-chart-1"
           data-ocid="header.endpoint_status"
         >
-          <span
-            className={cn(
-              "inline-flex rounded-full h-1.5 w-1.5",
-              isMockData ? "bg-chart-3" : "bg-chart-1",
-            )}
-          />
-          {isMockData ? "MOCK DATA" : "LIVE ENDPOINT"}
+          <span className="inline-flex rounded-full h-1.5 w-1.5 bg-chart-1" />
+          LIVE ENDPOINT
         </div>
       </div>
 
@@ -133,6 +119,18 @@ export function AppHeader() {
             size={13}
             className={cn(triggerFetch.isPending && "animate-spin")}
           />
+        </Button>
+
+        {/* Theme toggle */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          onClick={toggleTheme}
+          aria-label="Toggle color theme"
+          data-ocid="header.theme_toggle"
+        >
+          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
         </Button>
       </div>
     </header>

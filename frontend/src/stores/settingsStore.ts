@@ -18,7 +18,6 @@ const DEFAULT_CONFIG: SystemConfig = {
   min_rr: 2.0,
   news_endpoint_url: "https://api.example.com/news",
   polling_interval_mins: 5,
-  use_mock_data: true,
   processing_mode: "PRE-MARKET",
 };
 
