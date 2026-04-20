@@ -3,26 +3,26 @@
 Timestamps are in MILLISECONDS (epoch ms) for safe JS number handling.
 """
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional, Any
 
 
 class NewsArticleRef(BaseModel):
     id: str
-    title: str
-    description: str
-    source: str
-    published_at: int          # milliseconds since epoch
-    analyzed_at: int           # milliseconds since epoch
+    title: Optional[str] = "No Title"
+    description: Optional[str] = ""
+    source: Optional[str] = "Unknown"
+    published_at: Optional[int] = 0          # milliseconds since epoch
+    analyzed_at: Optional[int] = None           # milliseconds since epoch
     image_url: Optional[str] = None
-    impact_score: float        # 1.0–10.0
-    impact_summary: str
-    executive_summary: str
-    news_relevance: str        # "high" | "medium" | "low"
-    news_category: str         # "earnings" | "merger" | "regulatory" | "macro" | "product"
-    affected_symbols: list[str]
-    processing_status: str     # "pending" | "processed" | "skipped"
-    raw_analysis_data: Any     # Can be JSON object or string
+    impact_score: Optional[float] = 0.0        # 1.0–10.0
+    impact_summary: Optional[str] = ""
+    executive_summary: Optional[str] = ""
+    news_relevance: Optional[str] = "low"        # "high" | "medium" | "low"
+    news_category: Optional[str] = "macro"         # "earnings" | "merger" | "regulatory" | "macro" | "product"
+    affected_symbols: Optional[list[str]] = []
+    processing_status: Optional[str] = "pending"     # "pending" | "processed" | "skipped"
+    raw_analysis_data: Optional[Any] = {}     # Can be JSON object or string
 
 
 class SystemConfig(BaseModel):

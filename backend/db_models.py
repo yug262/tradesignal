@@ -44,3 +44,23 @@ class DBProcessingState(Base):
     current_mode = Column(String, default="pre_market")
     is_polling_active = Column(Boolean, default=False)
     articles_in_queue = Column(Integer, default=0)
+
+
+class DBTradeSignal(Base):
+    __tablename__ = "trade_signals"
+
+    id = Column(String, primary_key=True, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    signal_type = Column(String, nullable=False)       # BUY | SELL | HOLD | NO_TRADE
+    trade_mode = Column(String, nullable=False)         # INTRADAY | DELIVERY
+    entry_price = Column(Float)
+    stop_loss = Column(Float)
+    target_price = Column(Float)
+    risk_reward = Column(Float)
+    confidence = Column(Float)
+    reasoning = Column(JSON)                            # Gemini reasoning breakdown
+    news_article_ids = Column(JSON)                     # List of article IDs used
+    stock_snapshot = Column(JSON)                        # Price data at analysis time
+    generated_at = Column(BigInteger, nullable=False)
+    market_date = Column(String, nullable=False, index=True)  # YYYY-MM-DD
+    status = Column(String, default="active")           # active | expired | triggered

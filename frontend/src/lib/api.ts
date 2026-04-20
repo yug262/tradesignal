@@ -49,7 +49,8 @@ export async function apiFilterNews(
 
 export async function apiTriggerFetch(): Promise<string> {
   const res = await api.fetchNews();
-  return res.message;
+  if (res.message) return res.message;
+  return `Fetched ${res.new_articles_saved || 0} new articles`;
 }
 
 export async function apiGetNewsGrouped(): Promise<Record<string, NewsArticleRef[]>> {

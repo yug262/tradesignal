@@ -1,0 +1,200 @@
+"""Agent API router -- exposes trading signals, manual triggers, and scheduler status."""
+
+import time
+from datetime import datetime, timezone, timedelta
+from fastapi import APIRouter, Depends, Query
+from sqlalchemy.orm import Session
+
+import db_models
+from database import get_db
+from agent.signal_generator import run_full_analysis
+from agent.market_calendar import is_trading_day, get_news_fetch_window
+
+router = APIRouter(prefix="/api/agent", tags=["agent"])
+
+IST = timezone(timedelta(hours=5, minutes=30))
+
+
+@router.post("/run")
+def trigger_agent_run(db: Session = Depends(get_db)):
+    """Manually trigger a full agent analysis run."""
+    result = run_full_analysis(db)
+    return result
+
+
+@router.post("/fetch-news")
+def trigger_manual_news_fetch(db: Session = Depends(get_db)):
+    """Manually trigger a news fetch from the configured endpoint."""
+    from store import _get_store
+    from agent.data_collector import trigger_news_fetch
+
+    config = _get_store().config
+    if config.use_mock_data:
+        return {"status": "skipped", "message": "Mock mode is enabled"}
+
+    if not config.news_endpoint_url:
+        return {"status": "error", "message": "No news endpoint URL configured"}
+
+    new_count = trigger_news_fetch(config.news_endpoint_url, db)
+
+    # Count total articles in DB
+    total_in_db = db.query(db_models.NewsArticle).count()
+
+    return {
+        "status": "success",
+        "new_articles_saved": new_count,
+        "total_articles_in_db": total_in_db,
+    }
+
+
+@router.post("/cleanup")
+def trigger_manual_cleanup(db: Session = Depends(get_db)):
+    """Manually trigger DB cleanup (delete news older than 5 days)."""
+    five_days_ago_ms = int((time.time() - 5 * 24 * 3600) * 1000)
+
+    old_news = (
+        db.query(db_models.NewsArticle)
+        .filter(db_models.NewsArticle.published_at < five_days_ago_ms)
+    )
+    news_count = old_news.count()
+    if news_count > 0:
+        old_news.delete(synchronize_session=False)
+
+    thirty_days_ago_ms = int((time.time() - 30 * 24 * 3600) * 1000)
+    old_signals = (
+        db.query(db_models.DBTradeSignal)
+        .filter(db_models.DBTradeSignal.generated_at < thirty_days_ago_ms)
+    )
+    sig_count = old_signals.count()
+    if sig_count > 0:
+        old_signals.delete(synchronize_session=False)
+
+    db.commit()
+
+    return {
+        "status": "success",
+        "deleted_news": news_count,
+        "deleted_signals": sig_count,
+    }
+
+
+@router.get("/signals")
+def get_signals(
+    date: str = Query(default=None, description="Market date YYYY-MM-DD, defaults to today"),
+    signal_type: str = Query(default=None, description="Filter: BUY, SELL, HOLD, NO_TRADE"),
+    trade_mode: str = Query(default=None, description="Filter: INTRADAY, DELIVERY"),
+    min_confidence: float = Query(default=0, description="Minimum confidence"),
+    db: Session = Depends(get_db),
+):
+    """Get trading signals, optionally filtered by date, type, mode, and score."""
+    if not date:
+        date = datetime.now(IST).strftime("%Y-%m-%d")
+
+    query = (
+        db.query(db_models.DBTradeSignal)
+        .filter(db_models.DBTradeSignal.market_date == date)
+        .filter(db_models.DBTradeSignal.confidence >= min_confidence)
+    )
+
+    if signal_type:
+        query = query.filter(db_models.DBTradeSignal.signal_type == signal_type.upper())
+    if trade_mode:
+        query = query.filter(db_models.DBTradeSignal.trade_mode == trade_mode.upper())
+
+    signals = query.order_by(db_models.DBTradeSignal.confidence.desc()).all()
+
+    # Build summary
+    buy_count = sum(1 for s in signals if s.signal_type == "BUY")
+    sell_count = sum(1 for s in signals if s.signal_type == "SELL")
+    hold_count = sum(1 for s in signals if s.signal_type == "HOLD")
+    no_trade_count = sum(1 for s in signals if s.signal_type == "NO_TRADE")
+
+    return {
+        "market_date": date,
+        "total_signals": len(signals),
+        "signals_summary": {
+            "buy": buy_count,
+            "sell": sell_count,
+            "hold": hold_count,
+            "no_trade": no_trade_count,
+        },
+        "signals": [
+            {
+                "id": s.id,
+                "symbol": s.symbol,
+                "signal_type": s.signal_type,
+                "trade_mode": s.trade_mode,
+                "entry_price": s.entry_price,
+                "stop_loss": s.stop_loss,
+                "target_price": s.target_price,
+                "risk_reward": s.risk_reward,
+                "confidence": s.confidence,
+                "reasoning": s.reasoning,
+                "news_article_ids": s.news_article_ids,
+                "stock_snapshot": s.stock_snapshot,
+                "generated_at": s.generated_at,
+                "market_date": s.market_date,
+                "status": s.status,
+            }
+            for s in signals
+        ],
+    }
+
+
+@router.get("/status")
+def get_agent_status(db: Session = Depends(get_db)):
+    """Get full status: last run, scheduler info, market calendar, DB stats."""
+    from agent.scheduler import get_scheduler_status
+
+    today = datetime.now(IST).strftime("%Y-%m-%d")
+    today_date = datetime.now(IST).date()
+
+    # Get latest signal for today
+    latest = (
+        db.query(db_models.DBTradeSignal)
+        .filter(db_models.DBTradeSignal.market_date == today)
+        .order_by(db_models.DBTradeSignal.generated_at.desc())
+        .first()
+    )
+
+    total_today = (
+        db.query(db_models.DBTradeSignal)
+        .filter(db_models.DBTradeSignal.market_date == today)
+        .count()
+    )
+
+    if latest:
+        last_run_at = latest.generated_at
+        last_run_time = datetime.fromtimestamp(last_run_at / 1000, tz=IST).strftime("%H:%M:%S IST")
+    else:
+        last_run_at = None
+        last_run_time = "Never (today)"
+
+    # DB statistics
+    total_news = db.query(db_models.NewsArticle).count()
+    total_signals = db.query(db_models.DBTradeSignal).count()
+
+    # Market calendar info
+    _, _, window_info = get_news_fetch_window()
+
+    # Scheduler job info
+    sched_status = get_scheduler_status()
+
+    return {
+        "market_date": today,
+        "last_run_at": last_run_at,
+        "last_run_time": last_run_time,
+        "total_signals_today": total_today,
+        "db_stats": {
+            "total_news_articles": total_news,
+            "total_trade_signals": total_signals,
+        },
+        "market_calendar": {
+            "today_is_trading_day": is_trading_day(today_date),
+            "today_weekday": window_info["today_weekday"],
+            "last_trading_day": window_info["last_trading_day"],
+            "news_window": f"{window_info['from_time']} -> {window_info['to_time']}",
+            "window_hours": window_info["window_hours"],
+        },
+        "scheduler": sched_status,
+    }

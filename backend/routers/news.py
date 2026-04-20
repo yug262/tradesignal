@@ -21,7 +21,10 @@ def get_news(
     db: Session = Depends(get_db)
 ):
     """Get news articles with pagination and filtering."""
-    query = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.impact_score >= min_impact)
+    query = db.query(db_models.NewsArticle)
+    
+    if min_impact > 0:
+        query = query.filter(db_models.NewsArticle.impact_score >= min_impact)
     
     if symbol:
         query = query.filter(db_models.NewsArticle.affected_symbols.any(symbol))
@@ -97,7 +100,7 @@ def fetch_news(db: Session = Depends(get_db)):
         saved_count = 0
         skipped_count = 0
         for art in articles_data:
-            if art.impact_score < 5.0:
+            if art.impact_score <= 5.0:
                 skipped_count += 1
                 continue
 
@@ -126,51 +129,15 @@ def fetch_news(db: Session = Depends(get_db)):
         print(f"DEBUG: Mock fetch. Saved {saved_count} articles.")
         return {"message": f"Loaded {saved_count} new mock articles."}
     else:
+        from agent.data_collector import trigger_news_fetch
+        
         url = state.config.news_endpoint_url
+        if not url:
+            raise HTTPException(status_code=400, detail="No news endpoint URL configured")
+            
         try:
-            with httpx.Client(timeout=30.0) as client:
-                response = client.get(url)
-                response.raise_for_status()
-                json_res = response.json()
-                
-                articles_list = json_res if isinstance(json_res, list) else json_res.get("items", json_res.get("articles", []))
-                
-                saved_count = 0
-                skipped_count = 0
-                for item in articles_list:
-                    if not isinstance(item, dict): continue
-                        
-                    impact_score = float(item.get("impact_score", 0))
-                    if impact_score < 5.0:
-                        skipped_count += 1
-                        continue
-                    
-                    raw_data = item.get("raw_analysis_data", {})
-
-                    existing = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.id == item["id"]).first()
-                    if not existing:
-                        new_article = db_models.NewsArticle(
-                            id=item["id"],
-                            title=item["title"],
-                            description=item.get("description", ""),
-                            source=item["source"],
-                            published_at=item["published_at"],
-                            analyzed_at=item.get("analyzed_at"),
-                            impact_score=impact_score,
-                            impact_summary=item.get("impact_summary", ""),
-                            executive_summary=item.get("executive_summary", ""),
-                            news_category=item.get("news_category", ""),
-                            news_relevance=item.get("news_relevance", ""),
-                            affected_symbols=item.get("affected_symbols", []),
-                            raw_analysis_data=raw_data,
-                            processing_status=item.get("processing_status", "analyzed")
-                        )
-                        db.add(new_article)
-                        saved_count += 1
-                
-                db.commit()
-                print(f"DEBUG: Live fetch. Saved {saved_count} articles (skipped {skipped_count} low-impact).")
-                return {"status": "success", "message": f"Saved {saved_count} new articles."}
+            saved_count = trigger_news_fetch(url, db)
+            return {"status": "success", "message": f"Saved {saved_count} new articles.", "new_articles_saved": saved_count}
         except Exception as e:
             print(f"ERROR: Fetch failed: {str(e)[:100]}")
             raise HTTPException(status_code=500, detail="Fetch operation failed.")

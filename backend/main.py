@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import SystemConfig, ProcessingState
-from routers import news, config, dashboard
+from routers import news, config, dashboard, stocks, agent
 import database
 import db_models
 
@@ -40,10 +40,27 @@ app.add_middleware(
 app.include_router(news.router)
 app.include_router(config.router)
 app.include_router(dashboard.router)
+app.include_router(stocks.router)
+app.include_router(agent.router)
+
+
+# ─── Lifecycle events ─────────────────────────────────────────────────────────
+
+@app.on_event("startup")
+def on_startup():
+    from agent.scheduler import init_scheduler
+    init_scheduler()
+
+
+@app.on_event("shutdown")
+def on_shutdown():
+    from agent.scheduler import shutdown_scheduler
+    shutdown_scheduler()
+
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "version": "1.1.0", "database": "connected"}
+    return {"status": "ok", "version": "2.0.0", "database": "connected", "agent": "active"}
 
 
 if __name__ == "__main__":
