@@ -127,8 +127,8 @@ def run_full_analysis(db: Session = None) -> dict:
             print(f"      Decision: {decision} | Direction: {direction} | Gap: {gap_exp}")
             print(f"      Priority: {priority} | Confidence: {confidence} | Strength: {event_strength}")
 
-            # Map to DB-compatible signal_type
-            signal_type = _decision_to_signal_type(decision, direction)
+            # Map to watchlist-oriented signal_type (DB compatible)
+            signal_type = _decision_to_signal_type(decision)
             trade_mode = _trade_pref_to_mode(trade_pref)
 
             # Build signal record
@@ -143,24 +143,8 @@ def run_full_analysis(db: Session = None) -> dict:
                 "stop_loss": None,
                 "target_price": None,
                 "risk_reward": None,
-                "confidence": confidence,
-                "reasoning": {
-                    "decision": decision,
-                    "trade_preference": trade_pref,
-                    "direction_bias": direction,
-                    "gap_expectation": gap_exp,
-                    "priority": priority,
-                    "event_summary": gemini_result.get("event_summary", ""),
-                    "event_strength": event_strength,
-                    "directness": gemini_result.get("directness", "NONE"),
-                    "why_it_matters": gemini_result.get("why_it_matters", ""),
-                    "key_drivers": gemini_result.get("key_drivers", []),
-                    "risks": gemini_result.get("risks", []),
-                    "open_expectation": gemini_result.get("open_expectation", ""),
-                    "open_confirmation_needed": gemini_result.get("open_confirmation_needed", []),
-                    "invalid_if": gemini_result.get("invalid_if", []),
-                    "final_summary": gemini_result.get("final_summary", ""),
-                },
+                "confidence": int(confidence),
+                "reasoning": gemini_result,  # Agent 1 Contract is the source of truth
                 "news_article_ids": [a["id"] for a in articles],
                 "stock_snapshot": stock,
                 "generated_at": _now_ms(),
@@ -188,8 +172,8 @@ def run_full_analysis(db: Session = None) -> dict:
                 stop_loss=None,
                 target_price=None,
                 risk_reward=None,
-                confidence=confidence,
-                reasoning=signal_record["reasoning"],
+                confidence=int(confidence),
+                reasoning=gemini_result,
                 news_article_ids=[a["id"] for a in articles],
                 stock_snapshot=stock,
                 generated_at=_now_ms(),
@@ -210,7 +194,7 @@ def run_full_analysis(db: Session = None) -> dict:
         print(f"   Duration: {duration}ms")
         print(f"{'='*60}\n")
 
-        # Sort by confidence descending
+        # Sort by confidence descending (integer 0-100)
         signals.sort(key=lambda s: s.get("confidence", 0), reverse=True)
 
         return {
@@ -268,16 +252,11 @@ def _update_summary(summary: dict, decision: str, priority: str):
         summary["low"] += 1
 
 
-def _decision_to_signal_type(decision: str, direction: str) -> str:
-    """Map Agent 1 decision + direction to a signal_type for DB compatibility."""
+def _decision_to_signal_type(decision: str) -> str:
+    """Map Agent 1 decision to a signal_type for DB compatibility."""
     d = decision.upper()
     if "WATCH" in d:
-        if direction.upper() == "BULLISH":
-            return "BUY"
-        elif direction.upper() == "BEARISH":
-            return "SELL"
-        else:
-            return "HOLD"
+        return "WATCH"
     elif "IGNORE" in d or "STALE" in d:
         return "NO_TRADE"
     return "NO_TRADE"
@@ -285,11 +264,11 @@ def _decision_to_signal_type(decision: str, direction: str) -> str:
 
 def _trade_pref_to_mode(trade_pref: str) -> str:
     """Map Agent 1 trade_preference to a trade_mode for DB compatibility."""
-    p = trade_pref.upper()
+    p = (trade_pref or "").upper()
     if p == "INTRADAY":
         return "INTRADAY"
     elif p == "DELIVERY":
         return "DELIVERY"
     elif p == "BOTH":
-        return "INTRADAY"  # Default to intraday when both
-    return "INTRADAY"
+        return "BOTH"
+    return "NONE"
