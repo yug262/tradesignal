@@ -18,6 +18,7 @@ import { Route as MarketRegimeRouteImport } from './routes/market-regime'
 import { Route as MarketOpenRouteImport } from './routes/market-open'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as GroupingRouteImport } from './routes/grouping'
+import { Route as ExecutionPlannerRouteImport } from './routes/execution-planner'
 import { Route as AgentSignalsRouteImport } from './routes/agent-signals'
 import { Route as Agent1ResultsRouteImport } from './routes/agent-1-results'
 import { Route as IndexRouteImport } from './routes/index'
@@ -68,6 +69,11 @@ const GroupingRoute = GroupingRouteImport.update({
   path: '/grouping',
   getParentRoute: () => rootRouteImport,
 } as any)
+const ExecutionPlannerRoute = ExecutionPlannerRouteImport.update({
+  id: '/execution-planner',
+  path: '/execution-planner',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const AgentSignalsRoute = AgentSignalsRouteImport.update({
   id: '/agent-signals',
   path: '/agent-signals',
@@ -93,6 +99,7 @@ export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
+  '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
   '/market-open': typeof MarketOpenRoute
@@ -108,6 +115,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
+  '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
   '/market-open': typeof MarketOpenRoute
@@ -124,6 +132,7 @@ export interface FileRoutesById {
   '/': typeof IndexRoute
   '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
+  '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
   '/market-open': typeof MarketOpenRoute
@@ -141,6 +150,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agent-1-results'
     | '/agent-signals'
+    | '/execution-planner'
     | '/grouping'
     | '/journal'
     | '/market-open'
@@ -156,6 +166,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agent-1-results'
     | '/agent-signals'
+    | '/execution-planner'
     | '/grouping'
     | '/journal'
     | '/market-open'
@@ -171,6 +182,7 @@ export interface FileRouteTypes {
     | '/'
     | '/agent-1-results'
     | '/agent-signals'
+    | '/execution-planner'
     | '/grouping'
     | '/journal'
     | '/market-open'
@@ -187,6 +199,7 @@ export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   Agent1ResultsRoute: typeof Agent1ResultsRoute
   AgentSignalsRoute: typeof AgentSignalsRoute
+  ExecutionPlannerRoute: typeof ExecutionPlannerRoute
   GroupingRoute: typeof GroupingRoute
   JournalRoute: typeof JournalRoute
   MarketOpenRoute: typeof MarketOpenRoute
@@ -264,6 +277,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof GroupingRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/execution-planner': {
+      id: '/execution-planner'
+      path: '/execution-planner'
+      fullPath: '/execution-planner'
+      preLoaderRoute: typeof ExecutionPlannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/agent-signals': {
       id: '/agent-signals'
       path: '/agent-signals'
@@ -299,6 +319,7 @@ const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   Agent1ResultsRoute: Agent1ResultsRoute,
   AgentSignalsRoute: AgentSignalsRoute,
+  ExecutionPlannerRoute: ExecutionPlannerRoute,
   GroupingRoute: GroupingRoute,
   JournalRoute: JournalRoute,
   MarketOpenRoute: MarketOpenRoute,
