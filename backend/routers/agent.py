@@ -34,12 +34,25 @@ def trigger_confirmation_run(db: Session = Depends(get_db)):
     return result
 
 
+from agent.execution_agent import run_execution_planner
+
+@router.post("/execute")
+def trigger_execution_run(db: Session = Depends(get_db)):
+    """Manually trigger Execution Planner (Agent 3).
+    
+    Fetches confirmed signals and live market data to
+    plan exact execution levels and strategies.
+    """
+    result = run_execution_planner(db)
+    return result
+
+
 @router.post("/run-full-pipeline")
 def trigger_full_pipeline(db: Session = Depends(get_db)):
-    """Run both Agent 1 + Agent 2 back-to-back.
+    """Run Agent 1 + Agent 2 + Agent 3 back-to-back.
     
-    Useful for manual runs after 9:20 AM when you want
-    the complete analysis + confirmation in one click.
+    Useful for manual runs when you want
+    the complete analysis + confirmation + execution in one click.
     """
     # Phase 1: Pre-market analysis
     agent1_result = run_full_analysis(db)
@@ -47,9 +60,13 @@ def trigger_full_pipeline(db: Session = Depends(get_db)):
     # Phase 2: Confirmation with live data
     agent2_result = run_market_open_confirmation(db)
     
+    # Phase 3: Execution Planner
+    agent3_result = run_execution_planner(db)
+    
     return {
         "agent1_pre_market": agent1_result,
         "agent2_confirmation": agent2_result,
+        "agent3_execution": agent3_result,
     }
 
 
@@ -183,6 +200,10 @@ def get_signals(
                 "confirmation_status": s.confirmation_status,
                 "confirmed_at": s.confirmed_at,
                 "confirmation_data": s.confirmation_data,
+                # Agent 3 execution fields
+                "execution_status": s.execution_status,
+                "executed_at": s.executed_at,
+                "execution_data": s.execution_data,
             }
             for s in signals
         ],
@@ -232,6 +253,20 @@ def get_agent_status(db: Session = Depends(get_db)):
         .count()
     )
 
+    # Execution stats for today
+    executed_count = (
+        db.query(db_models.DBTradeSignal)
+        .filter(db_models.DBTradeSignal.market_date == today)
+        .filter(db_models.DBTradeSignal.execution_status == "planned")
+        .count()
+    )
+    exec_pending_count = (
+        db.query(db_models.DBTradeSignal)
+        .filter(db_models.DBTradeSignal.market_date == today)
+        .filter(db_models.DBTradeSignal.execution_status == "pending")
+        .count()
+    )
+
     # DB statistics
     total_news = db.query(db_models.NewsArticle).count()
     total_signals = db.query(db_models.DBTradeSignal).count()
@@ -250,6 +285,10 @@ def get_agent_status(db: Session = Depends(get_db)):
         "confirmation_stats": {
             "confirmed": confirmed_count,
             "pending": pending_count,
+        },
+        "execution_stats": {
+            "planned": executed_count,
+            "pending": exec_pending_count,
         },
         "db_stats": {
             "total_news_articles": total_news,

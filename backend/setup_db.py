@@ -110,7 +110,10 @@ def create_database():
                     status TEXT DEFAULT 'pending_confirmation',
                     confirmation_status TEXT DEFAULT 'pending',
                     confirmed_at BIGINT,
-                    confirmation_data JSON
+                    confirmation_data JSON,
+                    execution_status TEXT DEFAULT 'pending',
+                    executed_at BIGINT,
+                    execution_data JSON
                 );
                 CREATE INDEX IF NOT EXISTS idx_trade_signals_symbol ON trade_signals(symbol);
                 CREATE INDEX IF NOT EXISTS idx_trade_signals_market_date ON trade_signals(market_date);
@@ -131,6 +134,9 @@ def create_database():
             ("trade_signals", "confirmation_status", "TEXT DEFAULT 'pending'"),
             ("trade_signals", "confirmed_at", "BIGINT"),
             ("trade_signals", "confirmation_data", "JSON"),
+            ("trade_signals", "execution_status", "TEXT DEFAULT 'pending'"),
+            ("trade_signals", "executed_at", "BIGINT"),
+            ("trade_signals", "execution_data", "JSON"),
         ]
         for tbl, col, col_type in migrations:
             cur.execute(f"""
