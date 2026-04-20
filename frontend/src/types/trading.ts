@@ -27,7 +27,6 @@ export interface SystemConfig {
   min_rr: number;
   news_endpoint_url: string;
   polling_interval_mins: number;
-  use_mock_data: boolean;
   processing_mode: string;
 }
 
@@ -66,7 +65,7 @@ export interface PaginatedResponse<T> {
 }
 
 export type SystemMode = "PRE-MARKET" | "LIVE" | "BATCH";
-export type EndpointStatus = "MOCK_DATA" | "LIVE_ENDPOINT" | "OFFLINE";
+export type EndpointStatus = "LIVE_ENDPOINT" | "OFFLINE";
 export type ProcessingStatus =
   | "new"
   | "analyzed"

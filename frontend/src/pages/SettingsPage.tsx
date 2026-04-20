@@ -490,31 +490,6 @@ export function SettingsPage() {
                 />
               </Field>
 
-              {/* Mock data toggle */}
-              <div
-                className={cn(
-                  "flex items-center justify-between p-3.5 rounded border transition-smooth",
-                  cfg.use_mock_data
-                    ? "bg-chart-4/5 border-chart-4/30"
-                    : "bg-background border-border",
-                )}
-              >
-                <div className="space-y-0.5">
-                  <div className="font-mono text-[11px] text-foreground uppercase tracking-wider">
-                    Use Mock Data
-                  </div>
-                  <div className="font-mono text-[10px] text-muted-foreground opacity-60">
-                    {cfg.use_mock_data
-                      ? "System using built-in mock articles — no external calls"
-                      : "System fetching from live endpoint above"}
-                  </div>
-                </div>
-                <Switch
-                  checked={cfg.use_mock_data}
-                  onCheckedChange={(v) => update("use_mock_data", v)}
-                  data-ocid="settings.mock_data_switch"
-                />
-              </div>
 
               <SectionHeader
                 title="Processing Configuration"

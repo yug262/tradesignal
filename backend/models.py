@@ -4,7 +4,7 @@ Timestamps are in MILLISECONDS (epoch ms) for safe JS number handling.
 """
 
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, Any
 
 
 class NewsArticleRef(BaseModel):
@@ -13,16 +13,16 @@ class NewsArticleRef(BaseModel):
     description: str
     source: str
     published_at: int          # milliseconds since epoch
-    analyzed_at: int           # milliseconds since epoch
+    analyzed_at: Optional[int] = 0
     image_url: Optional[str] = None
-    impact_score: float        # 1.0–10.0
-    impact_summary: str
-    executive_summary: str
-    news_relevance: str        # "high" | "medium" | "low"
-    news_category: str         # "earnings" | "merger" | "regulatory" | "macro" | "product"
+    impact_score: float = 0.0
+    impact_summary: Optional[str] = ""
+    executive_summary: Optional[str] = ""
+    news_relevance: Optional[str] = "low"
+    news_category: Optional[str] = "other"
     affected_symbols: list[str]
     processing_status: str     # "pending" | "processed" | "skipped"
-    raw_analysis_data: str     # JSON string
+    raw_analysis_data: Any     # Can be JSON object or string
 
 
 class SystemConfig(BaseModel):
@@ -31,9 +31,8 @@ class SystemConfig(BaseModel):
     max_open_positions: int = 5
     max_daily_loss_pct: float = 3.0
     min_rr: float = 1.5
-    news_endpoint_url: str = "https://api.example.com/news"
+    news_endpoint_url: str = "https://destiny-luxury-douche.ngrok-free.dev/api/indian_news?limit=1000&today_only=false&exclude_noisy=false&analyzed_only=false&offset=0"
     polling_interval_mins: int = 5
-    use_mock_data: bool = True
     processing_mode: str = "pre_market"
 
 

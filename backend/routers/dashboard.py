@@ -1,6 +1,10 @@
 """Dashboard API router."""
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
+from sqlalchemy.orm import Session
+from database import get_db
+import db_models
+import time
 
 router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
 
@@ -11,24 +15,24 @@ def _get_store():
 
 
 @router.get("/summary")
-def get_dashboard_summary():
+def get_dashboard_summary(db: Session = Depends(get_db)):
     state = _get_store()
-    total = len(state.news_store)
+    
+    total = db.query(db_models.NewsArticle).count()
 
-    # 24 hours in milliseconds
+    # last 24 hours in milliseconds
     h24_ms = 86_400_000
-    now_approx = 1_713_225_600_000
+    now_ms = int(time.time() * 1000)
 
-    processed_today = 0
-    pending_count = 0
+    processed_today = db.query(db_models.NewsArticle).filter(
+        db_models.NewsArticle.analyzed_at >= now_ms - h24_ms
+    ).count()
+    
+    pending_count = db.query(db_models.NewsArticle).filter(
+        db_models.NewsArticle.processing_status == "pending"
+    ).count()
 
-    for art in state.news_store.values():
-        if art.analyzed_at >= now_approx - h24_ms:
-            processed_today += 1
-        if art.processing_status == "pending":
-            pending_count += 1
-
-    endpoint_status = "mock" if state.config.use_mock_data else "live"
+    endpoint_status = "live"
 
     return {
         "total_articles_consumed": total,
@@ -43,6 +47,21 @@ def get_dashboard_summary():
 
 
 @router.get("/processing-state")
-def get_processing_state():
-    state = _get_store()
-    return state.proc_state.model_dump()
+def get_processing_state(db: Session = Depends(get_db)):
+    # For now, processing state can remain in-memory or we can pull from DB
+    # Let's pull from DB to be consistent
+    ps = db.query(db_models.DBProcessingState).first()
+    if not ps:
+        ps = db_models.DBProcessingState()
+        db.add(ps)
+        db.commit()
+        db.refresh(ps)
+    
+    return {
+        "last_processed_article_id": ps.last_processed_article_id,
+        "last_poll_timestamp": ps.last_poll_timestamp,
+        "total_articles_processed": ps.total_articles_processed,
+        "current_mode": ps.current_mode,
+        "is_polling_active": ps.is_polling_active,
+        "articles_in_queue": ps.articles_in_queue,
+    }

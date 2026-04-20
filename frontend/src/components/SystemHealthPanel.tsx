@@ -67,9 +67,8 @@ export function SystemHealthPanel({
   onFetchNow,
   isFetching = false,
 }: SystemHealthPanelProps) {
-  const isMockData = config?.use_mock_data ?? true;
   const isPolling = processingState?.is_polling_active ?? false;
-  const isLive = !isMockData;
+  const isLive = true;
 
   const lastPollTs = processingState?.last_poll_timestamp ?? 0;
   const lastPollStr = lastPollTs > 0 ? formatTimestamp(lastPollTs) : "—";
@@ -111,7 +110,7 @@ export function SystemHealthPanel({
           >
             <StatusDot active={isLive} />
             <span className="ml-1">
-              {isLive ? "LIVE ENDPOINT" : "MOCK DATA"}
+              LIVE ENDPOINT
             </span>
           </Badge>
         </div>

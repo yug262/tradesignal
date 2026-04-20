@@ -1,0 +1,9 @@
+{
+  "name": "tradesignal-workspace",
+  "private": true,
+  "scripts": {
+    "dev:backend": "cd backend && python main.py",
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev": "npx concurrently \"npm run dev:backend\" \"npm run dev:frontend\""
+  }
+}

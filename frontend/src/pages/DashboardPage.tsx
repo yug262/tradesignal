@@ -81,10 +81,6 @@ export function DashboardPage() {
 
   const isLive =
     summary?.system_mode === "LIVE" || summary?.system_mode === "live";
-  const isMockData =
-    summary?.endpoint_status === "MOCK_DATA" ||
-    summary?.endpoint_status === "mock" ||
-    config?.use_mock_data;
 
   function handleFetch() {
     triggerFetch.mutate();
@@ -158,15 +154,10 @@ export function DashboardPage() {
           </Badge>
           <Badge
             variant="outline"
-            className={cn(
-              "font-mono text-[9px] px-2 py-0.5",
-              isMockData
-                ? "border-chart-4/30 text-chart-4 bg-chart-4/5"
-                : "border-chart-1/30 text-chart-1 bg-chart-1/5",
-            )}
+            className="font-mono text-[9px] px-2 py-0.5 border-chart-1/30 text-chart-1 bg-chart-1/5"
             data-ocid="dashboard.endpoint_badge"
           >
-            {isMockData ? "● MOCK DATA" : "● LIVE ENDPOINT"}
+            ● LIVE ENDPOINT
           </Badge>
           {procState?.is_polling_active && (
             <Badge
@@ -229,14 +220,9 @@ export function DashboardPage() {
               )}
               <Badge
                 variant="outline"
-                className={cn(
-                  "font-mono text-[9px] px-1.5 py-0 h-4 uppercase",
-                  isMockData
-                    ? "border-chart-4/30 text-chart-4 bg-chart-4/5"
-                    : "border-chart-1/30 text-chart-1 bg-chart-1/5",
-                )}
+                className="font-mono text-[9px] px-1.5 py-0 h-4 uppercase border-chart-1/30 text-chart-1 bg-chart-1/5"
               >
-                {isMockData ? "MOCK DATA" : "LIVE"}
+                LIVE
               </Badge>
             </div>
             <Link
