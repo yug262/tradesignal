@@ -106,6 +106,10 @@ export const api = {
     return request<any>("/agent/confirm", { method: "POST" });
   },
 
+  triggerExecutionRun() {
+    return request<any>("/agent/execute", { method: "POST" });
+  },
+
   triggerFullPipeline() {
     return request<any>("/agent/run-full-pipeline", { method: "POST" });
   },

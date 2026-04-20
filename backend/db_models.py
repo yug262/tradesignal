@@ -68,3 +68,8 @@ class DBTradeSignal(Base):
     confirmation_status = Column(String, default="pending")  # pending | confirmed | revised | invalidated
     confirmed_at = Column(BigInteger, nullable=True)          # Timestamp when Agent 2 ran
     confirmation_data = Column(JSON, nullable=True)           # Full Gemini confirmation output
+
+    # -- Execution Agent (Phase 3) columns --
+    execution_status = Column(String, default="pending")      # pending | planned | skipped
+    executed_at = Column(BigInteger, nullable=True)           # Timestamp when Agent 3 ran
+    execution_data = Column(JSON, nullable=True)              # Full Gemini execution plan output
