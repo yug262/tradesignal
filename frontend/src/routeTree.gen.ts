@@ -19,6 +19,7 @@ import { Route as MarketOpenRouteImport } from './routes/market-open'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as GroupingRouteImport } from './routes/grouping'
 import { Route as AgentSignalsRouteImport } from './routes/agent-signals'
+import { Route as Agent1ResultsRouteImport } from './routes/agent-1-results'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SymbolsSymbolIdRouteImport } from './routes/symbols.$symbolId'
 
@@ -72,6 +73,11 @@ const AgentSignalsRoute = AgentSignalsRouteImport.update({
   path: '/agent-signals',
   getParentRoute: () => rootRouteImport,
 } as any)
+const Agent1ResultsRoute = Agent1ResultsRouteImport.update({
+  id: '/agent-1-results',
+  path: '/agent-1-results',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -85,6 +91,7 @@ const SymbolsSymbolIdRoute = SymbolsSymbolIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
@@ -99,6 +106,7 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
@@ -114,6 +122,7 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
@@ -130,6 +139,7 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/agent-1-results'
     | '/agent-signals'
     | '/grouping'
     | '/journal'
@@ -144,6 +154,7 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agent-1-results'
     | '/agent-signals'
     | '/grouping'
     | '/journal'
@@ -158,6 +169,7 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/agent-1-results'
     | '/agent-signals'
     | '/grouping'
     | '/journal'
@@ -173,6 +185,7 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  Agent1ResultsRoute: typeof Agent1ResultsRoute
   AgentSignalsRoute: typeof AgentSignalsRoute
   GroupingRoute: typeof GroupingRoute
   JournalRoute: typeof JournalRoute
@@ -258,6 +271,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentSignalsRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/agent-1-results': {
+      id: '/agent-1-results'
+      path: '/agent-1-results'
+      fullPath: '/agent-1-results'
+      preLoaderRoute: typeof Agent1ResultsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/': {
       id: '/'
       path: '/'
@@ -277,6 +297,7 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  Agent1ResultsRoute: Agent1ResultsRoute,
   AgentSignalsRoute: AgentSignalsRoute,
   GroupingRoute: GroupingRoute,
   JournalRoute: JournalRoute,
