@@ -7,10 +7,10 @@ import {
 import { cn } from "@/lib/utils";
 import { formatUTC } from "@/lib/utils";
 import { useUIStore } from "@/stores/uiStore";
-import { RefreshCw } from "lucide-react";
+import { Moon, RefreshCw, Sun } from "lucide-react";
 
 export function AppHeader() {
-  const activePageTitle = useUIStore((s) => s.activePageTitle);
+  const { activePageTitle, theme, toggleTheme } = useUIStore();
   const { data: procState } = useProcessingState();
   const { data: summary } = useDashboardSummary();
   const triggerFetch = useTriggerFetch();
@@ -119,6 +119,18 @@ export function AppHeader() {
             size={13}
             className={cn(triggerFetch.isPending && "animate-spin")}
           />
+        </Button>
+
+        {/* Theme toggle */}
+        <Button
+          variant="ghost"
+          size="icon"
+          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          onClick={toggleTheme}
+          aria-label="Toggle color theme"
+          data-ocid="header.theme_toggle"
+        >
+          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
         </Button>
       </div>
     </header>

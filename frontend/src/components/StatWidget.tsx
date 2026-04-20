@@ -16,11 +16,11 @@ interface StatWidgetProps {
 }
 
 const BADGE_STYLES: Record<BadgeVariant, string> = {
-  default: "border-border text-muted-foreground bg-secondary",
+  default: "border-border text-muted-foreground bg-muted/20",
   amber: "border-primary/40 text-primary bg-primary/10",
   green: "border-chart-1/40 text-chart-1 bg-chart-1/10",
   red: "border-destructive/40 text-destructive bg-destructive/10",
-  muted: "border-border text-muted-foreground opacity-50",
+  muted: "border-border text-muted-foreground/60 bg-muted/10",
   phase: "border-chart-4/40 text-chart-4 bg-chart-4/10",
 };
 
