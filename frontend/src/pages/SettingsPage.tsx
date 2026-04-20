@@ -349,14 +349,6 @@ export function SettingsPage() {
               Capital & Risk
             </TabsTrigger>
             <TabsTrigger
-              value="endpoint"
-              className="font-mono text-[10px] uppercase tracking-wider h-7 px-3 data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
-              data-ocid="settings.tab.endpoint"
-            >
-              <Globe size={10} className="mr-1" />
-              News Endpoint
-            </TabsTrigger>
-            <TabsTrigger
               value="status"
               className="font-mono text-[10px] uppercase tracking-wider h-7 px-3 data-[state=active]:bg-primary/10 data-[state=active]:text-primary"
               data-ocid="settings.tab.status"
@@ -469,119 +461,6 @@ export function SettingsPage() {
             </div>
           </TabsContent>
 
-          {/* ── TAB 2: NEWS ENDPOINT ───────────────────────────────────── */}
-          <TabsContent value="endpoint" className="mt-3">
-            <div className="bg-card border border-border rounded p-5 space-y-5">
-              <SectionHeader title="News Source Configuration" icon={Globe} />
-
-              <Field
-                label="Endpoint URL"
-                hint="External news platform API endpoint — must return analyzed articles"
-                id="endpoint_url"
-              >
-                <Input
-                  id="endpoint_url"
-                  type="url"
-                  value={cfg.news_endpoint_url}
-                  onChange={(e) => update("news_endpoint_url", e.target.value)}
-                  className="h-8 font-mono text-xs bg-background border-border"
-                  placeholder="https://api.example.com/news"
-                  data-ocid="settings.endpoint_url_input"
-                />
-              </Field>
-
-
-              <SectionHeader
-                title="Processing Configuration"
-                icon={BarChart3}
-              />
-
-              {/* Processing mode radio */}
-              <div className="space-y-1.5">
-                <Label className="font-mono text-[10px] text-muted-foreground uppercase tracking-wider block">
-                  Processing Mode
-                </Label>
-                <div
-                  className="grid grid-cols-1 sm:grid-cols-3 gap-2"
-                  data-ocid="settings.processing_mode_group"
-                >
-                  {["PRE-MARKET", "LIVE", "BATCH"].map((mode) => (
-                    <button
-                      key={mode}
-                      type="button"
-                      className={cn(
-                        "flex flex-col items-start p-3 rounded border font-mono text-xs transition-smooth",
-                        cfg.processing_mode === mode
-                          ? "bg-primary/10 border-primary/40 text-primary"
-                          : "bg-background border-border text-muted-foreground hover:border-border/70 hover:text-foreground",
-                      )}
-                      onClick={() => update("processing_mode", mode)}
-                      data-ocid={`settings.mode_option.${mode.toLowerCase().replace("-", "_")}`}
-                    >
-                      <span className="font-semibold text-[11px] uppercase">
-                        {mode}
-                      </span>
-                      <span className="text-[9px] mt-0.5 opacity-70 leading-relaxed">
-                        {mode === "PRE-MARKET"
-                          ? "Batch before market open"
-                          : mode === "LIVE"
-                            ? "Continuous real-time polling"
-                            : "Manual batch trigger only"}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <SliderField
-                label="Polling Interval"
-                hint="How often to fetch new articles in live mode"
-                id="polling_interval"
-                value={Number(cfg.polling_interval_mins)}
-                min={1}
-                max={60}
-                step={1}
-                unit=" min"
-                onChange={(v) =>
-                  update("polling_interval_mins", Math.round(v))
-                }
-                ocid="settings.polling_interval_slider"
-              />
-
-              {/* Manual fetch */}
-              <div className="pt-1 border-t border-border/30">
-                <Button
-                  variant="outline"
-                  size="sm"
-                  className="font-mono text-[10px] h-8 px-4 border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50 uppercase tracking-wider"
-                  onClick={() => {
-                    triggerFetch.mutate(undefined, {
-                      onSuccess: () =>
-                        toast.success("Fetch triggered successfully"),
-                      onError: () => toast.error("Fetch failed"),
-                    });
-                  }}
-                  disabled={triggerFetch.isPending}
-                  type="button"
-                  data-ocid="settings.fetch_now_button"
-                >
-                  <RefreshCw
-                    size={10}
-                    className={cn(
-                      "mr-1.5",
-                      triggerFetch.isPending && "animate-spin",
-                    )}
-                  />
-                  {triggerFetch.isPending ? "Fetching..." : "FETCH NEWS NOW"}
-                </Button>
-                {triggerFetch.isSuccess && (
-                  <span className="ml-3 font-mono text-[10px] text-chart-1">
-                    ✓ Fetch completed
-                  </span>
-                )}
-              </div>
-            </div>
-          </TabsContent>
 
           {/* ── TAB 3: SYSTEM STATUS ───────────────────────────────────── */}
           <TabsContent value="status" className="mt-3">
