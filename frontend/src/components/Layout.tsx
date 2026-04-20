@@ -8,6 +8,7 @@ import { AppSidebar } from "./AppSidebar";
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/opportunities": "Live Trade Opportunities",
+  "/agent-signals": "Pre-Market Trade Signals",
   "/news-feed": "News-to-Trade Feed",
   "/mode-analysis": "Mode Analysis",
   "/trade-planner": "Trade Planner",

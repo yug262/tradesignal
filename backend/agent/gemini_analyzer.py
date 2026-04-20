@@ -115,7 +115,7 @@ def analyze_stock(
     Returns a dict with Gemini's analysis or a fallback if unavailable.
     """
     if not _client:
-        return _fallback_analysis(symbol, articles, stock_data)
+        return _fallback_analysis(symbol, scores)
 
     news_section = _format_news_section(articles)
 
