@@ -153,59 +153,6 @@ export function SystemHealthPanel({
         </div>
       </div>
 
-      {/* News Endpoint section */}
-      <div className="bg-card border border-border rounded p-3 space-y-2.5">
-        <div className="flex items-center gap-1.5">
-          <Globe size={10} className="text-muted-foreground" />
-          <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest">
-            News Endpoint
-          </span>
-        </div>
-
-        {config ? (
-          <>
-            <div
-              className="font-mono text-[10px] text-muted-foreground bg-background border border-border rounded px-2 py-1.5 truncate"
-              title={config.news_endpoint_url}
-            >
-              {config.news_endpoint_url || "— not configured —"}
-            </div>
-            <div className="flex items-center justify-between text-[10px]">
-              <span className="font-mono text-muted-foreground uppercase tracking-wider text-[9px]">
-                Mode:
-              </span>
-              <Badge
-                variant="outline"
-                className="font-mono text-[9px] px-1.5 py-0 h-4 border-border text-muted-foreground"
-              >
-                {config.processing_mode}
-              </Badge>
-            </div>
-
-            {onFetchNow && (
-              <Button
-                variant="outline"
-                size="sm"
-                className="w-full h-7 font-mono text-[10px] border-primary/30 text-primary hover:bg-primary/10 hover:border-primary/50 uppercase tracking-wider"
-                onClick={onFetchNow}
-                disabled={isFetching}
-                type="button"
-                data-ocid="system_health_panel.fetch_now_button"
-              >
-                <RefreshCw
-                  size={10}
-                  className={cn("mr-1.5", isFetching && "animate-spin")}
-                />
-                {isFetching ? "Fetching..." : "FETCH NOW"}
-              </Button>
-            )}
-          </>
-        ) : (
-          <div className="font-mono text-[10px] text-muted-foreground opacity-40 text-center py-2">
-            — loading config —
-          </div>
-        )}
-      </div>
     </div>
   );
 }
