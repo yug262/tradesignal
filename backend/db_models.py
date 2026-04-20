@@ -31,7 +31,6 @@ class DBSystemConfig(Base):
     min_rr = Column(Float, default=1.5)
     news_endpoint_url = Column(String)
     polling_interval_mins = Column(Integer, default=5)
-    use_mock_data = Column(Boolean, default=False)
     processing_mode = Column(String, default="pre_market")
 
 class DBProcessingState(Base):

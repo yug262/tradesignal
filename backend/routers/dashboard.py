@@ -32,7 +32,7 @@ def get_dashboard_summary(db: Session = Depends(get_db)):
         db_models.NewsArticle.processing_status == "pending"
     ).count()
 
-    endpoint_status = "mock" if state.config.use_mock_data else "live"
+    endpoint_status = "live"
 
     return {
         "total_articles_consumed": total,
