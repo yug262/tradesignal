@@ -107,7 +107,10 @@ def create_database():
                     stock_snapshot JSON,
                     generated_at BIGINT NOT NULL,
                     market_date TEXT NOT NULL,
-                    status TEXT DEFAULT 'active'
+                    status TEXT DEFAULT 'pending_confirmation',
+                    confirmation_status TEXT DEFAULT 'pending',
+                    confirmed_at BIGINT,
+                    confirmation_data JSON
                 );
                 CREATE INDEX IF NOT EXISTS idx_trade_signals_symbol ON trade_signals(symbol);
                 CREATE INDEX IF NOT EXISTS idx_trade_signals_market_date ON trade_signals(market_date);
@@ -122,6 +125,24 @@ def create_database():
             else:
                 cur.execute(create_sql)
                 print(f"  [OK] Table '{table_name}' created")
+
+        # --- Auto-migrate: add missing columns to existing tables ---
+        migrations = [
+            ("trade_signals", "confirmation_status", "TEXT DEFAULT 'pending'"),
+            ("trade_signals", "confirmed_at", "BIGINT"),
+            ("trade_signals", "confirmation_data", "JSON"),
+        ]
+        for tbl, col, col_type in migrations:
+            cur.execute(f"""
+                SELECT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name = '{tbl}' AND column_name = '{col}'
+                )
+            """)
+            col_exists = cur.fetchone()[0]
+            if not col_exists:
+                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}")
+                print(f"  [MIGRATE] Added column '{col}' to '{tbl}'")
 
         cur.close()
         conn.close()

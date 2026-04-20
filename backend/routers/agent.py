@@ -8,6 +8,7 @@ from sqlalchemy.orm import Session
 import db_models
 from database import get_db
 from agent.signal_generator import run_full_analysis
+from agent.confirmation_agent import run_market_open_confirmation
 from agent.market_calendar import is_trading_day, get_news_fetch_window
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -17,9 +18,39 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 @router.post("/run")
 def trigger_agent_run(db: Session = Depends(get_db)):
-    """Manually trigger a full agent analysis run."""
+    """Manually trigger a full agent analysis run (Agent 1: pre-market)."""
     result = run_full_analysis(db)
     return result
+
+
+@router.post("/confirm")
+def trigger_confirmation_run(db: Session = Depends(get_db)):
+    """Manually trigger Market Open Confirmation (Agent 2).
+    
+    Fetches live market data and confirms/revises/invalidates
+    today's pending signals from Agent 1.
+    """
+    result = run_market_open_confirmation(db)
+    return result
+
+
+@router.post("/run-full-pipeline")
+def trigger_full_pipeline(db: Session = Depends(get_db)):
+    """Run both Agent 1 + Agent 2 back-to-back.
+    
+    Useful for manual runs after 9:20 AM when you want
+    the complete analysis + confirmation in one click.
+    """
+    # Phase 1: Pre-market analysis
+    agent1_result = run_full_analysis(db)
+    
+    # Phase 2: Confirmation with live data
+    agent2_result = run_market_open_confirmation(db)
+    
+    return {
+        "agent1_pre_market": agent1_result,
+        "agent2_confirmation": agent2_result,
+    }
 
 
 @router.post("/fetch-news")
@@ -82,9 +113,10 @@ def get_signals(
     signal_type: str = Query(default=None, description="Filter: BUY, SELL, HOLD, NO_TRADE"),
     trade_mode: str = Query(default=None, description="Filter: INTRADAY, DELIVERY"),
     min_confidence: float = Query(default=0, description="Minimum confidence"),
+    confirmation_status: str = Query(default=None, description="Filter: pending, confirmed, revised, invalidated"),
     db: Session = Depends(get_db),
 ):
-    """Get trading signals, optionally filtered by date, type, mode, and score."""
+    """Get trading signals, optionally filtered by date, type, mode, score, and confirmation status."""
     if not date:
         date = datetime.now(IST).strftime("%Y-%m-%d")
 
@@ -98,6 +130,8 @@ def get_signals(
         query = query.filter(db_models.DBTradeSignal.signal_type == signal_type.upper())
     if trade_mode:
         query = query.filter(db_models.DBTradeSignal.trade_mode == trade_mode.upper())
+    if confirmation_status:
+        query = query.filter(db_models.DBTradeSignal.confirmation_status == confirmation_status.lower())
 
     signals = query.order_by(db_models.DBTradeSignal.confidence.desc()).all()
 
@@ -107,6 +141,12 @@ def get_signals(
     hold_count = sum(1 for s in signals if s.signal_type == "HOLD")
     no_trade_count = sum(1 for s in signals if s.signal_type == "NO_TRADE")
 
+    # Confirmation summary
+    confirmed_count = sum(1 for s in signals if s.confirmation_status == "confirmed")
+    revised_count = sum(1 for s in signals if s.confirmation_status == "revised")
+    invalidated_count = sum(1 for s in signals if s.confirmation_status == "invalidated")
+    pending_count = sum(1 for s in signals if s.confirmation_status == "pending")
+
     return {
         "market_date": date,
         "total_signals": len(signals),
@@ -115,6 +155,12 @@ def get_signals(
             "sell": sell_count,
             "hold": hold_count,
             "no_trade": no_trade_count,
+        },
+        "confirmation_summary": {
+            "confirmed": confirmed_count,
+            "revised": revised_count,
+            "invalidated": invalidated_count,
+            "pending": pending_count,
         },
         "signals": [
             {
@@ -133,6 +179,10 @@ def get_signals(
                 "generated_at": s.generated_at,
                 "market_date": s.market_date,
                 "status": s.status,
+                # Agent 2 confirmation fields
+                "confirmation_status": s.confirmation_status,
+                "confirmed_at": s.confirmed_at,
+                "confirmation_data": s.confirmation_data,
             }
             for s in signals
         ],
@@ -168,6 +218,20 @@ def get_agent_status(db: Session = Depends(get_db)):
         last_run_at = None
         last_run_time = "Never (today)"
 
+    # Confirmation stats for today
+    confirmed_count = (
+        db.query(db_models.DBTradeSignal)
+        .filter(db_models.DBTradeSignal.market_date == today)
+        .filter(db_models.DBTradeSignal.confirmation_status == "confirmed")
+        .count()
+    )
+    pending_count = (
+        db.query(db_models.DBTradeSignal)
+        .filter(db_models.DBTradeSignal.market_date == today)
+        .filter(db_models.DBTradeSignal.confirmation_status == "pending")
+        .count()
+    )
+
     # DB statistics
     total_news = db.query(db_models.NewsArticle).count()
     total_signals = db.query(db_models.DBTradeSignal).count()
@@ -183,6 +247,10 @@ def get_agent_status(db: Session = Depends(get_db)):
         "last_run_at": last_run_at,
         "last_run_time": last_run_time,
         "total_signals_today": total_today,
+        "confirmation_stats": {
+            "confirmed": confirmed_count,
+            "pending": pending_count,
+        },
         "db_stats": {
             "total_news_articles": total_news,
             "total_trade_signals": total_signals,

@@ -102,12 +102,21 @@ export const api = {
     return request<any>("/agent/run", { method: "POST" });
   },
 
-  getAgentSignals(params?: { date?: string; signal_type?: string; trade_mode?: string; min_confidence?: number }) {
+  triggerConfirmationRun() {
+    return request<any>("/agent/confirm", { method: "POST" });
+  },
+
+  triggerFullPipeline() {
+    return request<any>("/agent/run-full-pipeline", { method: "POST" });
+  },
+
+  getAgentSignals(params?: { date?: string; signal_type?: string; trade_mode?: string; min_confidence?: number; confirmation_status?: string }) {
     const qs = new URLSearchParams();
     if (params?.date) qs.set("date", params.date);
     if (params?.signal_type) qs.set("signal_type", params.signal_type);
     if (params?.trade_mode) qs.set("trade_mode", params.trade_mode);
     if (params?.min_confidence != null) qs.set("min_confidence", String(params.min_confidence));
+    if (params?.confirmation_status) qs.set("confirmation_status", params.confirmation_status);
     const query = qs.toString();
     return request<any>(`/agent/signals${query ? `?${query}` : ""}`);
   },

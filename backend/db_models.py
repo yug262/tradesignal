@@ -62,4 +62,9 @@ class DBTradeSignal(Base):
     stock_snapshot = Column(JSON)                        # Price data at analysis time
     generated_at = Column(BigInteger, nullable=False)
     market_date = Column(String, nullable=False, index=True)  # YYYY-MM-DD
-    status = Column(String, default="active")           # active | expired | triggered
+    status = Column(String, default="pending_confirmation")  # pending_confirmation | confirmed | revised | invalidated
+
+    # -- Market Open Confirmation Agent (Phase 2) columns --
+    confirmation_status = Column(String, default="pending")  # pending | confirmed | revised | invalidated
+    confirmed_at = Column(BigInteger, nullable=True)          # Timestamp when Agent 2 ran
+    confirmation_data = Column(JSON, nullable=True)           # Full Gemini confirmation output
