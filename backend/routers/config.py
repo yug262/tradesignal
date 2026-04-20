@@ -30,7 +30,6 @@ def _get_or_create_config(db: Session) -> db_models.DBSystemConfig:
             min_rr=defaults.min_rr,
             news_endpoint_url=defaults.news_endpoint_url,
             polling_interval_mins=defaults.polling_interval_mins,
-            use_mock_data=defaults.use_mock_data,
             processing_mode=defaults.processing_mode
         )
         db.add(cfg)
@@ -66,7 +65,6 @@ def get_config(db: Session = Depends(get_db)):
         min_rr=cfg.min_rr,
         news_endpoint_url=cfg.news_endpoint_url,
         polling_interval_mins=cfg.polling_interval_mins,
-        use_mock_data=cfg.use_mock_data,
         processing_mode=cfg.processing_mode
     )
     return state.config.model_dump()
@@ -83,7 +81,6 @@ def update_config(new_cfg: SystemConfig, db: Session = Depends(get_db)):
         cfg.min_rr = new_cfg.min_rr
         cfg.news_endpoint_url = new_cfg.news_endpoint_url
         cfg.polling_interval_mins = new_cfg.polling_interval_mins
-        cfg.use_mock_data = new_cfg.use_mock_data
         cfg.processing_mode = new_cfg.processing_mode
         
         db.commit()
@@ -107,7 +104,6 @@ def reset_config(db: Session = Depends(get_db)):
     cfg.min_rr = defaults.min_rr
     cfg.news_endpoint_url = defaults.news_endpoint_url
     cfg.polling_interval_mins = defaults.polling_interval_mins
-    cfg.use_mock_data = defaults.use_mock_data
     cfg.processing_mode = defaults.processing_mode
     
     db.commit()
