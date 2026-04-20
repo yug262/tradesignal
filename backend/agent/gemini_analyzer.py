@@ -17,7 +17,7 @@ MODEL_NAME = os.getenv("GEMINI_MODEL")
 
 # Create client
 _client = None
-if GEMINI_API_KEY and GEMINI_API_KEY != GEMINI_API_KEY:
+if GEMINI_API_KEY and GEMINI_API_KEY != "your_gemini_api_key_here":
     _client = genai.Client(api_key=GEMINI_API_KEY)
 
 
