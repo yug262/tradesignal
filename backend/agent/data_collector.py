@@ -254,13 +254,19 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
 
 def fetch_stock_data_for_symbols(symbols: list[str]) -> dict[str, dict]:
     """
-    Fetch live stock price data for a list of symbols via Groww API.
-    Returns dict mapping symbol -> stock data dict.
+    Fetch rich market context for a list of symbols via Groww API.
+    
+    For each symbol, returns:
+      - Basic price data (close, open, high, low, volume, 52-week range)
+      - Historical averages (5d/20d volume)
+      - Multi-period returns (1d, 5d, 20d)
+      - Trend classification (up/down/sideways/mixed)
+      - Distance from 20-day high/low
     """
     results = {}
     for sym in symbols:
         try:
-            data = get_accurate_stock_data(sym)
+            data = _fetch_rich_stock_data(sym)
             if data and not data.get("error"):
                 results[sym] = data
             else:
@@ -268,3 +274,169 @@ def fetch_stock_data_for_symbols(symbols: list[str]) -> dict[str, dict]:
         except Exception as e:
             print(f"  [WARN] Failed to fetch {sym}: {e}")
     return results
+
+
+def _fetch_rich_stock_data(symbol: str) -> dict:
+    """
+    Fetch comprehensive market context for a single symbol.
+    Uses Groww's live price API + charting API for historical candles.
+    """
+    import httpx
+
+    clean = symbol.replace(".NS", "")
+    data = {
+        "symbol": clean,
+        "company_name": clean,
+        # Basic price data
+        "previous_close": None,
+        "last_close": None,
+        "today_open": None,
+        "today_high": None,
+        "today_low": None,
+        "gap_percentage": None,
+        "52_week_high": None,
+        "52_week_low": None,
+        "current_volume": None,
+        "current_change_pct": None,
+        "current_change_amount": None,
+        # Previous day candle
+        "prev_day_open": None,
+        "prev_day_high": None,
+        "prev_day_low": None,
+        "prev_day_volume": None,
+        # Historical averages
+        "avg_volume_5d": None,
+        "avg_volume_20d": None,
+        # Multi-period returns
+        "change_1d_percent": None,
+        "change_5d_percent": None,
+        "change_20d_percent": None,
+        # Trend & relative position
+        "recent_trend": None,
+        "distance_from_20d_high_percent": None,
+        "distance_from_20d_low_percent": None,
+        # Error
+        "error": None,
+    }
+
+    if clean == "GENERAL":
+        return data
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+
+    with httpx.Client(timeout=10.0) as client:
+        try:
+            # ── 1. Live price data ──────────────────────────────────────
+            live_url = (
+                f"https://groww.in/v1/api/stocks_data/v1/tr_live_prices/"
+                f"exchange/NSE/segment/CASH/{clean}/latest"
+            )
+            live_res = client.get(live_url, headers=headers)
+
+            if live_res.status_code != 200:
+                data["error"] = f"Live API HTTP {live_res.status_code}"
+                return data
+
+            live = live_res.json()
+            pc = live.get("close")
+            o = live.get("open")
+
+            data["previous_close"] = pc
+            data["last_close"] = pc
+            data["today_open"] = o
+            data["today_high"] = live.get("high")
+            data["today_low"] = live.get("low")
+            data["52_week_high"] = live.get("yearHighPrice")
+            data["52_week_low"] = live.get("yearLowPrice")
+            data["current_volume"] = live.get("volume")
+            data["current_change_pct"] = live.get("dayChangePerc")
+            data["current_change_amount"] = live.get("dayChange")
+            data["change_1d_percent"] = live.get("dayChangePerc")
+
+            if o is not None and pc is not None and pc != 0:
+                data["gap_percentage"] = round(((o - pc) / pc) * 100, 2)
+
+            # ── 2. Historical candles (daily, 30 days back) ─────────────
+            end_ms = int(time.time() * 1000)
+            start_ms = end_ms - (86400 * 35 * 1000)  # 35 days to ensure 20+ trading days
+
+            chart_url = (
+                f"https://groww.in/v1/api/charting_service/v2/chart/"
+                f"exchange/NSE/segment/CASH/{clean}"
+                f"?intervalInMinutes=1440&minimal=false"
+                f"&startTimeInMillis={start_ms}&endTimeInMillis={end_ms}"
+            )
+            chart_res = client.get(chart_url, headers=headers)
+
+            if chart_res.status_code == 200:
+                candles = chart_res.json().get("candles", [])
+                # Candle format: [timestamp, open, high, low, close, volume]
+
+                if len(candles) >= 2:
+                    # Previous day candle (second-to-last is yesterday)
+                    prev = candles[-2]
+                    data["prev_day_open"] = prev[1]
+                    data["prev_day_high"] = prev[2]
+                    data["prev_day_low"] = prev[3]
+                    data["prev_day_volume"] = prev[5] if len(prev) > 5 else None
+
+                    # ── Volume averages ──────────────────────────────
+                    volumes = [c[5] for c in candles if len(c) > 5 and c[5]]
+                    if len(volumes) >= 5:
+                        data["avg_volume_5d"] = int(sum(volumes[-5:]) / 5)
+                    if len(volumes) >= 20:
+                        data["avg_volume_20d"] = int(sum(volumes[-20:]) / 20)
+                    elif len(volumes) >= 5:
+                        data["avg_volume_20d"] = int(sum(volumes) / len(volumes))
+
+                    # ── Multi-period returns ─────────────────────────
+                    closes = [c[4] for c in candles if len(c) > 4 and c[4]]
+                    if closes and pc:
+                        if len(closes) >= 5:
+                            close_5d_ago = closes[-5]
+                            data["change_5d_percent"] = round(
+                                ((pc - close_5d_ago) / close_5d_ago) * 100, 2
+                            )
+                        if len(closes) >= 20:
+                            close_20d_ago = closes[-20]
+                            data["change_20d_percent"] = round(
+                                ((pc - close_20d_ago) / close_20d_ago) * 100, 2
+                            )
+
+                    # ── 20-day high/low distance ─────────────────────
+                    recent_20 = candles[-20:] if len(candles) >= 20 else candles
+                    highs_20d = [c[2] for c in recent_20 if len(c) > 2 and c[2]]
+                    lows_20d = [c[3] for c in recent_20 if len(c) > 3 and c[3]]
+
+                    if highs_20d and pc:
+                        high_20d = max(highs_20d)
+                        data["distance_from_20d_high_percent"] = round(
+                            ((pc - high_20d) / high_20d) * 100, 2
+                        )
+                    if lows_20d and pc:
+                        low_20d = min(lows_20d)
+                        data["distance_from_20d_low_percent"] = round(
+                            ((pc - low_20d) / low_20d) * 100, 2
+                        )
+
+                    # ── Trend classification ─────────────────────────
+                    if closes and len(closes) >= 5:
+                        c5 = data.get("change_5d_percent") or 0
+                        c20 = data.get("change_20d_percent") or 0
+
+                        if c5 > 2 and c20 > 3:
+                            data["recent_trend"] = "up"
+                        elif c5 < -2 and c20 < -3:
+                            data["recent_trend"] = "down"
+                        elif abs(c5) <= 2 and abs(c20) <= 3:
+                            data["recent_trend"] = "sideways"
+                        else:
+                            data["recent_trend"] = "mixed"
+
+        except Exception as e:
+            data["error"] = str(e)
+
+    return data
+
