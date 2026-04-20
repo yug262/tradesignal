@@ -63,7 +63,7 @@ def run_full_analysis(db: Session = None) -> dict:
 
         # -- Step 1: Optionally fetch fresh news --------------------------
         config = _get_store().config
-        if not config.use_mock_data and config.news_endpoint_url:
+        if config.news_endpoint_url:
             print("\n[STEP 1] Fetching fresh news from endpoint...")
             new_count = trigger_news_fetch(config.news_endpoint_url, db)
             print(f"   [OK] Saved {new_count} new articles")

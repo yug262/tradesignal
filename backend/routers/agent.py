@@ -29,8 +29,6 @@ def trigger_manual_news_fetch(db: Session = Depends(get_db)):
     from agent.data_collector import trigger_news_fetch
 
     config = _get_store().config
-    if config.use_mock_data:
-        return {"status": "skipped", "message": "Mock mode is enabled"}
 
     if not config.news_endpoint_url:
         return {"status": "error", "message": "No news endpoint URL configured"}
