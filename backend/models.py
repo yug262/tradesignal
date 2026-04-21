@@ -34,6 +34,9 @@ class SystemConfig(BaseModel):
     news_endpoint_url: str = "https://destiny-luxury-douche.ngrok-free.dev/api/indian_news?limit=1000&today_only=false&exclude_noisy=false&analyzed_only=false&offset=0"
     polling_interval_mins: int = 5
     processing_mode: str = "pre_market"
+    # Agent 3 position-sizing / risk boundaries
+    max_loss_per_trade_pct: float = 1.0     # Max % of total capital risked as loss per trade
+    max_capital_per_trade_pct: float = 20.0 # Max % of total capital allocated per trade (prevents over-concentration)
 
 
 class ProcessingState(BaseModel):

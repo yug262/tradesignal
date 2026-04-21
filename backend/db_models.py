@@ -32,6 +32,9 @@ class DBSystemConfig(Base):
     news_endpoint_url = Column(String)
     polling_interval_mins = Column(Integer, default=5)
     processing_mode = Column(String, default="pre_market")
+    # Risk-per-trade controls (Agent 3 position sizing)
+    max_loss_per_trade_pct = Column(Float, default=1.0)    # Max % of capital to LOSE per trade (stop width controls this)
+    max_capital_per_trade_pct = Column(Float, default=20.0) # Max % of total capital allocated to a single position
 
 class DBProcessingState(Base):
     __tablename__ = "processing_state"

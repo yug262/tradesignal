@@ -30,7 +30,9 @@ def _get_or_create_config(db: Session) -> db_models.DBSystemConfig:
             min_rr=defaults.min_rr,
             news_endpoint_url=defaults.news_endpoint_url,
             polling_interval_mins=defaults.polling_interval_mins,
-            processing_mode=defaults.processing_mode
+            processing_mode=defaults.processing_mode,
+            max_loss_per_trade_pct=defaults.max_loss_per_trade_pct,
+            max_capital_per_trade_pct=defaults.max_capital_per_trade_pct,
         )
         db.add(cfg)
         db.commit()
@@ -41,13 +43,17 @@ def _get_or_create_config(db: Session) -> db_models.DBSystemConfig:
 def _validate_config(config: SystemConfig) -> bool:
     if config.capital <= 0:
         return False
-    if config.risk_per_trade_pct < 0.5 or config.risk_per_trade_pct > 5.0:
+    if config.risk_per_trade_pct <= 0 or config.risk_per_trade_pct > 100.0:
         return False
-    if config.min_rr < 1.0:
+    if config.min_rr < 0.1:
         return False
-    if config.max_open_positions < 1 or config.max_open_positions > 20:
+    if config.max_open_positions < 1 or config.max_open_positions > 100:
         return False
     if config.polling_interval_mins < 1:
+        return False
+    if config.max_loss_per_trade_pct <= 0 or config.max_loss_per_trade_pct > 100.0:
+        return False
+    if config.max_capital_per_trade_pct <= 0 or config.max_capital_per_trade_pct > 100.0:
         return False
     return True
 
@@ -65,7 +71,9 @@ def get_config(db: Session = Depends(get_db)):
         min_rr=cfg.min_rr,
         news_endpoint_url=cfg.news_endpoint_url,
         polling_interval_mins=cfg.polling_interval_mins,
-        processing_mode=cfg.processing_mode
+        processing_mode=cfg.processing_mode,
+        max_loss_per_trade_pct=cfg.max_loss_per_trade_pct or 1.0,
+        max_capital_per_trade_pct=cfg.max_capital_per_trade_pct or 20.0,
     )
     return state.config.model_dump()
 
@@ -82,6 +90,8 @@ def update_config(new_cfg: SystemConfig, db: Session = Depends(get_db)):
         cfg.news_endpoint_url = new_cfg.news_endpoint_url
         cfg.polling_interval_mins = new_cfg.polling_interval_mins
         cfg.processing_mode = new_cfg.processing_mode
+        cfg.max_loss_per_trade_pct = new_cfg.max_loss_per_trade_pct
+        cfg.max_capital_per_trade_pct = new_cfg.max_capital_per_trade_pct
         
         db.commit()
         
@@ -105,6 +115,8 @@ def reset_config(db: Session = Depends(get_db)):
     cfg.news_endpoint_url = defaults.news_endpoint_url
     cfg.polling_interval_mins = defaults.polling_interval_mins
     cfg.processing_mode = defaults.processing_mode
+    cfg.max_loss_per_trade_pct = defaults.max_loss_per_trade_pct
+    cfg.max_capital_per_trade_pct = defaults.max_capital_per_trade_pct
     
     db.commit()
     

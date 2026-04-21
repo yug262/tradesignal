@@ -137,6 +137,9 @@ def create_database():
             ("trade_signals", "execution_status", "TEXT DEFAULT 'pending'"),
             ("trade_signals", "executed_at", "BIGINT"),
             ("trade_signals", "execution_data", "JSON"),
+            # Risk management columns for Agent 3 position sizing
+            ("system_config", "max_loss_per_trade_pct", "FLOAT DEFAULT 1.0"),
+            ("system_config", "max_capital_per_trade_pct", "FLOAT DEFAULT 20.0"),
         ]
         for tbl, col, col_type in migrations:
             cur.execute(f"""

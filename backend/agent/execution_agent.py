@@ -70,11 +70,25 @@ def run_execution_planner(db: Session = None) -> dict:
                 "duration_ms": 0,
             }
 
-        # -- Step 2: Fetch LIVE stock data --
+        # -- Step 2: Fetch risk config from DB for position sizing --
+        db_cfg = db.query(db_models.DBSystemConfig).first()
+        risk_config = {
+            "capital": db_cfg.capital if db_cfg else 100_000.0,
+            "max_loss_per_trade_pct": db_cfg.max_loss_per_trade_pct if db_cfg else 1.0,
+            "max_capital_per_trade_pct": db_cfg.max_capital_per_trade_pct if db_cfg else 20.0,
+            "min_rr": db_cfg.min_rr if db_cfg else 1.5,
+            "max_daily_loss_pct": db_cfg.max_daily_loss_pct if db_cfg else 3.0,
+        } if db_cfg else {}
+        print(f"   [CONFIG] Capital: Rs.{risk_config.get('capital', 0):,.0f} | "
+              f"Max loss/trade: {risk_config.get('max_loss_per_trade_pct', 1)}% | "
+              f"Max capital/trade: {risk_config.get('max_capital_per_trade_pct', 20)}% | "
+              f"Min R:R: {risk_config.get('min_rr', 1.5)}")
+
+        # -- Step 3: Fetch LIVE stock data --
         symbols = list(set(s.symbol for s in pending_signals))
         live_data_map = fetch_stock_data_for_symbols(symbols)
 
-        # -- Step 3: Process each signal --
+        # -- Step 4: Process each signal --
         results = []
         summary = {"planned": 0, "avoided": 0, "skipped": 0}
 
@@ -193,9 +207,9 @@ def run_execution_planner(db: Session = None) -> dict:
                 "live_execution_context": live_execution_context
             }
 
-            # 4. Call Agent 3 (Gemini Executor)
+            # 4. Call Agent 3 (Gemini Executor) with risk config
             print(f"      [GEMINI] Agent 3 planning {sig.symbol}...")
-            execution_plan = plan_execution(agent3_input)
+            execution_plan = plan_execution(agent3_input, risk_config=risk_config)
 
             action = execution_plan.get("action", "AVOID").upper()
             exec_dec = execution_plan.get("execution_decision", "NO TRADE").upper()
@@ -220,12 +234,22 @@ def run_execution_planner(db: Session = None) -> dict:
                 ep = execution_plan.get("entry_plan", {})
                 sl = execution_plan.get("stop_loss", {})
                 tg = execution_plan.get("target", {})
-                
+                sizing = execution_plan.get("position_sizing", {})
+
                 sig.signal_type = "BUY" if action == "BUY" else "SELL" if action == "SELL" else "WATCH"
                 sig.entry_price = ep.get("entry_price")
                 sig.stop_loss = sl.get("price")
                 sig.target_price = tg.get("price")
+                # risk_reward stored as string in execution_data; keep DB column null (schema is Float)
+                # Future: parse ratio to float here if needed
                 summary["planned"] += 1
+
+                ps = sizing
+                shares = ps.get("position_size_shares", 0)
+                pos_inr = ps.get("position_size_inr", 0)
+                cap_pct = ps.get("capital_used_pct", 0)
+                print(f"      [SIZING] {shares} shares @ Rs.{ep.get('entry_price', 0)} "
+                      f"= Rs.{pos_inr:,.0f} ({cap_pct}% of capital)")
             else:
                 summary["avoided"] += 1
 

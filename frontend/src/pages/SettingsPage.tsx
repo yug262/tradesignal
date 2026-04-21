@@ -113,7 +113,7 @@ function SliderField({
   onChange: (v: number) => void;
   ocid: string;
 }) {
-  const pct = ((value - min) / (max - min)) * 100;
+  const pct = Math.max(0, Math.min(100, ((value - min) / (max - min)) * 100));
   return (
     <div className="space-y-1.5">
       <div className="flex items-center justify-between">
@@ -123,12 +123,24 @@ function SliderField({
         >
           {label}
         </Label>
-        <span className="font-mono text-xs text-primary font-bold tabular-nums">
-          {value.toFixed(step < 1 ? 1 : 0)}
-          {unit}
-        </span>
+        <div className="flex items-center gap-1">
+          <Input
+            id={`${id}-input`}
+            type="number"
+            value={value}
+            min={min}
+            max={max}
+            step={step}
+            onChange={(e) => {
+              const val = e.target.value === "" ? 0 : Number.parseFloat(e.target.value);
+              onChange(val);
+            }}
+            className="h-6 w-16 px-1 py-0 text-right font-mono text-xs text-primary font-bold bg-transparent border-border/50 focus-visible:ring-1 focus-visible:ring-primary/50"
+          />
+          {unit && <span className="font-mono text-xs text-primary font-bold tabular-nums">{unit}</span>}
+        </div>
       </div>
-      <div className="relative h-1.5 bg-secondary rounded-full">
+      <div className="relative h-1.5 bg-secondary rounded-full mt-1">
         <div
           className="absolute left-0 top-0 h-full bg-primary rounded-full transition-all"
           style={{ width: `${pct}%` }}
@@ -409,8 +421,8 @@ export function SettingsPage() {
 
               <div className="space-y-5">
                 <SliderField
-                  label="Risk Per Trade"
-                  hint="Maximum capital risked per single trade"
+                  label="Risk Per Trade (legacy)"
+                  hint="Original risk % field — superseded by Max Loss Per Trade below for Agent 3"
                   id="risk_per_trade"
                   value={cfg.risk_per_trade_pct}
                   min={0.5}
@@ -421,8 +433,32 @@ export function SettingsPage() {
                   ocid="settings.risk_per_trade_slider"
                 />
                 <SliderField
+                  label="Max Loss Per Trade"
+                  hint="Agent 3 hard limit: maximum capital you can lose if stop-loss is hit on a single trade"
+                  id="max_loss_per_trade"
+                  value={cfg.max_loss_per_trade_pct ?? 1.0}
+                  min={0.25}
+                  max={5}
+                  step={0.25}
+                  unit="%"
+                  onChange={(v) => update("max_loss_per_trade_pct", v)}
+                  ocid="settings.max_loss_per_trade_slider"
+                />
+                <SliderField
+                  label="Max Capital Per Trade"
+                  hint="Agent 3 hard limit: maximum % of total capital deployed in one position (hard ceiling: 50%)"
+                  id="max_capital_per_trade"
+                  value={cfg.max_capital_per_trade_pct ?? 20.0}
+                  min={5}
+                  max={50}
+                  step={5}
+                  unit="%"
+                  onChange={(v) => update("max_capital_per_trade_pct", v)}
+                  ocid="settings.max_capital_per_trade_slider"
+                />
+                <SliderField
                   label="Max Daily Loss"
-                  hint="Circuit breaker — halt all new trades if reached"
+                  hint="Circuit breaker — halt all new trades if total day loss reaches this"
                   id="max_daily_loss"
                   value={cfg.max_daily_loss_pct}
                   min={1}
@@ -432,6 +468,35 @@ export function SettingsPage() {
                   onChange={(v) => update("max_daily_loss_pct", v)}
                   ocid="settings.max_daily_loss_slider"
                 />
+              </div>
+
+              {/* Agent 3 Risk Summary Panel */}
+              <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-4 space-y-2">
+                <div className="flex items-center gap-2 mb-3">
+                  <BarChart3 size={11} className="text-indigo-400" />
+                  <span className="font-mono text-[9px] text-indigo-400 uppercase tracking-widest">Agent 3 Position Sizing Limits</span>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-[10px] font-mono">
+                  <div className="bg-background/50 rounded p-2 border border-border/30">
+                    <div className="text-muted-foreground text-[8px] uppercase mb-0.5">Max Loss / Trade</div>
+                    <div className="text-red-400 font-bold">₹{((cfg.capital * (cfg.max_loss_per_trade_pct ?? 1)) / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                  </div>
+                  <div className="bg-background/50 rounded p-2 border border-border/30">
+                    <div className="text-muted-foreground text-[8px] uppercase mb-0.5">Max Capital / Trade</div>
+                    <div className="text-amber-400 font-bold">₹{((cfg.capital * Math.min(cfg.max_capital_per_trade_pct ?? 20, 50)) / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                  </div>
+                  <div className="bg-background/50 rounded p-2 border border-border/30">
+                    <div className="text-muted-foreground text-[8px] uppercase mb-0.5">Daily Loss Budget</div>
+                    <div className="text-orange-400 font-bold">₹{((cfg.capital * cfg.max_daily_loss_pct) / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                  </div>
+                  <div className="bg-background/50 rounded p-2 border border-border/30">
+                    <div className="text-muted-foreground text-[8px] uppercase mb-0.5">Min R:R Required</div>
+                    <div className="text-emerald-400 font-bold">{cfg.min_rr}:1</div>
+                  </div>
+                </div>
+                <p className="font-mono text-[8px] text-muted-foreground opacity-50 pt-1">
+                  Agent 3 will never allocate &gt;50% of capital in a single trade regardless of the max capital setting.
+                </p>
               </div>
 
               <Field

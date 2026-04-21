@@ -28,6 +28,9 @@ export interface SystemConfig {
   news_endpoint_url: string;
   polling_interval_mins: number;
   processing_mode: string;
+  // Agent 3 position-sizing boundaries
+  max_loss_per_trade_pct: number;    // Max % of capital to lose per trade
+  max_capital_per_trade_pct: number; // Max % of capital allocated per trade
 }
 
 export interface ProcessingState {
