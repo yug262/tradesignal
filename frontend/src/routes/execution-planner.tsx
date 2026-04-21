@@ -404,6 +404,37 @@ function ExecutionPlannerPage() {
                            )}
                         </div>
 
+                        {/* Position Sizing Block */}
+                        {eData.position_sizing && eData.position_sizing.position_size_shares > 0 && (
+                          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
+                            <div className="flex items-center gap-2 mb-2">
+                              <Activity size={11} className="text-emerald-400" />
+                              <span className="font-mono text-[9px] text-emerald-400 uppercase tracking-widest font-semibold">Position Sizing</span>
+                            </div>
+                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                              <div className="bg-background/50 rounded p-2 border border-border/30">
+                                <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Shares</div>
+                                <div className="font-mono text-sm font-bold text-foreground">{eData.position_sizing.position_size_shares.toLocaleString()}</div>
+                              </div>
+                              <div className="bg-background/50 rounded p-2 border border-border/30">
+                                <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Capital Deployed</div>
+                                <div className="font-mono text-sm font-bold text-amber-400">₹{eData.position_sizing.position_size_inr?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                              </div>
+                              <div className="bg-background/50 rounded p-2 border border-border/30">
+                                <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">% of Capital</div>
+                                <div className="font-mono text-sm font-bold text-blue-400">{eData.position_sizing.capital_used_pct}%</div>
+                              </div>
+                              <div className="bg-background/50 rounded p-2 border border-border/30">
+                                <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Max Loss at SL</div>
+                                <div className="font-mono text-sm font-bold text-red-400">₹{eData.position_sizing.max_loss_at_sl?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                              </div>
+                            </div>
+                            {eData.position_sizing.sizing_note && (
+                              <p className="font-mono text-[8px] text-muted-foreground opacity-50 mt-2">{eData.position_sizing.sizing_note}</p>
+                            )}
+                          </div>
+                        )}
+
                         {/* Final Summary */}
                         {eData.final_summary && (
                           <div className="bg-indigo-500/5 border border-indigo-500/20 rounded p-3">
