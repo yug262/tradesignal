@@ -1,3 +1,4 @@
+import { cn } from "@/lib/utils";
 import { useUIStore } from "@/stores/uiStore";
 import { useRouterState } from "@tanstack/react-router";
 import { useEffect } from "react";
@@ -7,6 +8,7 @@ import { AppSidebar } from "./AppSidebar";
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Dashboard",
   "/opportunities": "Live Trade Opportunities",
+  "/agent-signals": "Pre-Market Trade Signals",
   "/news-feed": "News-to-Trade Feed",
   "/mode-analysis": "Mode Analysis",
   "/trade-planner": "Trade Planner",
@@ -29,6 +31,7 @@ interface LayoutProps {
 
 export function Layout({ children }: LayoutProps) {
   const routerState = useRouterState();
+  const theme = useUIStore((s) => s.theme);
   const setActivePageTitle = useUIStore((s) => s.setActivePageTitle);
   const currentPath = routerState.location.pathname;
 
@@ -36,8 +39,14 @@ export function Layout({ children }: LayoutProps) {
     setActivePageTitle(getPageTitle(currentPath));
   }, [currentPath, setActivePageTitle]);
 
+  useEffect(() => {
+    const root = window.document.documentElement;
+    root.classList.remove("light", "dark");
+    root.classList.add(theme);
+  }, [theme]);
+
   return (
-    <div className="flex h-screen w-screen overflow-hidden bg-background dark">
+    <div className="flex h-screen w-screen overflow-hidden bg-background">
       <AppSidebar />
       <div className="flex flex-col flex-1 min-w-0 overflow-hidden">
         <AppHeader />

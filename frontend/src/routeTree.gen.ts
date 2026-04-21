@@ -15,8 +15,12 @@ import { Route as OpportunitiesRouteImport } from './routes/opportunities'
 import { Route as NewsFeedRouteImport } from './routes/news-feed'
 import { Route as ModeAnalysisRouteImport } from './routes/mode-analysis'
 import { Route as MarketRegimeRouteImport } from './routes/market-regime'
+import { Route as MarketOpenRouteImport } from './routes/market-open'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as GroupingRouteImport } from './routes/grouping'
+import { Route as ExecutionPlannerRouteImport } from './routes/execution-planner'
+import { Route as AgentSignalsRouteImport } from './routes/agent-signals'
+import { Route as Agent1ResultsRouteImport } from './routes/agent-1-results'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SymbolsSymbolIdRouteImport } from './routes/symbols.$symbolId'
 
@@ -50,6 +54,11 @@ const MarketRegimeRoute = MarketRegimeRouteImport.update({
   path: '/market-regime',
   getParentRoute: () => rootRouteImport,
 } as any)
+const MarketOpenRoute = MarketOpenRouteImport.update({
+  id: '/market-open',
+  path: '/market-open',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const JournalRoute = JournalRouteImport.update({
   id: '/journal',
   path: '/journal',
@@ -58,6 +67,21 @@ const JournalRoute = JournalRouteImport.update({
 const GroupingRoute = GroupingRouteImport.update({
   id: '/grouping',
   path: '/grouping',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const ExecutionPlannerRoute = ExecutionPlannerRouteImport.update({
+  id: '/execution-planner',
+  path: '/execution-planner',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const AgentSignalsRoute = AgentSignalsRouteImport.update({
+  id: '/agent-signals',
+  path: '/agent-signals',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const Agent1ResultsRoute = Agent1ResultsRouteImport.update({
+  id: '/agent-1-results',
+  path: '/agent-1-results',
   getParentRoute: () => rootRouteImport,
 } as any)
 const IndexRoute = IndexRouteImport.update({
@@ -73,8 +97,12 @@ const SymbolsSymbolIdRoute = SymbolsSymbolIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
+  '/agent-1-results': typeof Agent1ResultsRoute
+  '/agent-signals': typeof AgentSignalsRoute
+  '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
+  '/market-open': typeof MarketOpenRoute
   '/market-regime': typeof MarketRegimeRoute
   '/mode-analysis': typeof ModeAnalysisRoute
   '/news-feed': typeof NewsFeedRoute
@@ -85,8 +113,12 @@ export interface FileRoutesByFullPath {
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/agent-1-results': typeof Agent1ResultsRoute
+  '/agent-signals': typeof AgentSignalsRoute
+  '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
+  '/market-open': typeof MarketOpenRoute
   '/market-regime': typeof MarketRegimeRoute
   '/mode-analysis': typeof ModeAnalysisRoute
   '/news-feed': typeof NewsFeedRoute
@@ -98,8 +130,12 @@ export interface FileRoutesByTo {
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
+  '/agent-1-results': typeof Agent1ResultsRoute
+  '/agent-signals': typeof AgentSignalsRoute
+  '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
+  '/market-open': typeof MarketOpenRoute
   '/market-regime': typeof MarketRegimeRoute
   '/mode-analysis': typeof ModeAnalysisRoute
   '/news-feed': typeof NewsFeedRoute
@@ -112,8 +148,12 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
+    | '/agent-1-results'
+    | '/agent-signals'
+    | '/execution-planner'
     | '/grouping'
     | '/journal'
+    | '/market-open'
     | '/market-regime'
     | '/mode-analysis'
     | '/news-feed'
@@ -124,8 +164,12 @@ export interface FileRouteTypes {
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
+    | '/agent-1-results'
+    | '/agent-signals'
+    | '/execution-planner'
     | '/grouping'
     | '/journal'
+    | '/market-open'
     | '/market-regime'
     | '/mode-analysis'
     | '/news-feed'
@@ -136,8 +180,12 @@ export interface FileRouteTypes {
   id:
     | '__root__'
     | '/'
+    | '/agent-1-results'
+    | '/agent-signals'
+    | '/execution-planner'
     | '/grouping'
     | '/journal'
+    | '/market-open'
     | '/market-regime'
     | '/mode-analysis'
     | '/news-feed'
@@ -149,8 +197,12 @@ export interface FileRouteTypes {
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
+  Agent1ResultsRoute: typeof Agent1ResultsRoute
+  AgentSignalsRoute: typeof AgentSignalsRoute
+  ExecutionPlannerRoute: typeof ExecutionPlannerRoute
   GroupingRoute: typeof GroupingRoute
   JournalRoute: typeof JournalRoute
+  MarketOpenRoute: typeof MarketOpenRoute
   MarketRegimeRoute: typeof MarketRegimeRoute
   ModeAnalysisRoute: typeof ModeAnalysisRoute
   NewsFeedRoute: typeof NewsFeedRoute
@@ -204,6 +256,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MarketRegimeRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/market-open': {
+      id: '/market-open'
+      path: '/market-open'
+      fullPath: '/market-open'
+      preLoaderRoute: typeof MarketOpenRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/journal': {
       id: '/journal'
       path: '/journal'
@@ -216,6 +275,27 @@ declare module '@tanstack/react-router' {
       path: '/grouping'
       fullPath: '/grouping'
       preLoaderRoute: typeof GroupingRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/execution-planner': {
+      id: '/execution-planner'
+      path: '/execution-planner'
+      fullPath: '/execution-planner'
+      preLoaderRoute: typeof ExecutionPlannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agent-signals': {
+      id: '/agent-signals'
+      path: '/agent-signals'
+      fullPath: '/agent-signals'
+      preLoaderRoute: typeof AgentSignalsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/agent-1-results': {
+      id: '/agent-1-results'
+      path: '/agent-1-results'
+      fullPath: '/agent-1-results'
+      preLoaderRoute: typeof Agent1ResultsRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/': {
@@ -237,8 +317,12 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
+  Agent1ResultsRoute: Agent1ResultsRoute,
+  AgentSignalsRoute: AgentSignalsRoute,
+  ExecutionPlannerRoute: ExecutionPlannerRoute,
   GroupingRoute: GroupingRoute,
   JournalRoute: JournalRoute,
+  MarketOpenRoute: MarketOpenRoute,
   MarketRegimeRoute: MarketRegimeRoute,
   ModeAnalysisRoute: ModeAnalysisRoute,
   NewsFeedRoute: NewsFeedRoute,

@@ -18,11 +18,16 @@ export function formatCount(n: number): string {
 }
 
 export function timeAgo(date: Date): string {
+  if (!date || date.getTime() <= 0) return "Just now"; // Fallback for missing/zero dates
+
   const now = Date.now();
-  const diffMs = now - date.getTime();
+  const diffMs = Math.max(0, now - date.getTime());
   const diffSec = Math.floor(diffMs / 1000);
   const diffMin = Math.floor(diffSec / 60);
   const diffHr = Math.floor(diffMin / 60);
+  const diffDays = Math.floor(diffHr / 24);
+
+  if (diffDays > 0) return `${diffDays}d ago`;
   if (diffHr > 0) return `${diffHr}h ago`;
   if (diffMin > 0) return `${diffMin}m ago`;
   return `${diffSec}s ago`;

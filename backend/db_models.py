@@ -6,19 +6,19 @@ class NewsArticle(Base):
 
     id = Column(String, primary_key=True, index=True)
     title = Column(String)
-    description = Column(String)
+    description = Column(String, nullable=True)
     source = Column(String)
-    published_at = Column(BigInteger)  # milliseconds
-    analyzed_at = Column(BigInteger)   # milliseconds
+    published_at = Column(BigInteger)
+    analyzed_at = Column(BigInteger, nullable=True)
     image_url = Column(String, nullable=True)
-    impact_score = Column(Float)
-    impact_summary = Column(String)
-    executive_summary = Column(String)
-    news_relevance = Column(String)
-    news_category = Column(String)
-    affected_symbols = Column(ARRAY(String))
+    impact_score = Column(Float, default=0.0)
+    impact_summary = Column(String, nullable=True)
+    executive_summary = Column(String, nullable=True)
+    news_relevance = Column(String, nullable=True)
+    news_category = Column(String, nullable=True)
+    affected_symbols = Column(ARRAY(String), default=[])
     processing_status = Column(String)
-    raw_analysis_data = Column(JSON)
+    raw_analysis_data = Column(JSON, nullable=True)
 
 class DBSystemConfig(Base):
     __tablename__ = "system_config"
@@ -32,6 +32,9 @@ class DBSystemConfig(Base):
     news_endpoint_url = Column(String)
     polling_interval_mins = Column(Integer, default=5)
     processing_mode = Column(String, default="pre_market")
+    # Risk-per-trade controls (Agent 3 position sizing)
+    max_loss_per_trade_pct = Column(Float, default=1.0)    # Max % of capital to LOSE per trade (stop width controls this)
+    max_capital_per_trade_pct = Column(Float, default=20.0) # Max % of total capital allocated to a single position
 
 class DBProcessingState(Base):
     __tablename__ = "processing_state"
@@ -43,3 +46,33 @@ class DBProcessingState(Base):
     current_mode = Column(String, default="pre_market")
     is_polling_active = Column(Boolean, default=False)
     articles_in_queue = Column(Integer, default=0)
+
+
+class DBTradeSignal(Base):
+    __tablename__ = "trade_signals"
+
+    id = Column(String, primary_key=True, index=True)
+    symbol = Column(String, nullable=False, index=True)
+    signal_type = Column(String, nullable=False)       # BUY | SELL | HOLD | NO_TRADE
+    trade_mode = Column(String, nullable=False)         # INTRADAY | DELIVERY
+    entry_price = Column(Float)
+    stop_loss = Column(Float)
+    target_price = Column(Float)
+    risk_reward = Column(Float)
+    confidence = Column(Float)
+    reasoning = Column(JSON)                            # Gemini reasoning breakdown
+    news_article_ids = Column(JSON)                     # List of article IDs used
+    stock_snapshot = Column(JSON)                        # Price data at analysis time
+    generated_at = Column(BigInteger, nullable=False)
+    market_date = Column(String, nullable=False, index=True)  # YYYY-MM-DD
+    status = Column(String, default="pending_confirmation")  # pending_confirmation | confirmed | revised | invalidated
+
+    # -- Market Open Confirmation Agent (Phase 2) columns --
+    confirmation_status = Column(String, default="pending")  # pending | confirmed | revised | invalidated
+    confirmed_at = Column(BigInteger, nullable=True)          # Timestamp when Agent 2 ran
+    confirmation_data = Column(JSON, nullable=True)           # Full Gemini confirmation output
+
+    # -- Execution Agent (Phase 3) columns --
+    execution_status = Column(String, default="pending")      # pending | planned | skipped
+    executed_at = Column(BigInteger, nullable=True)           # Timestamp when Agent 3 ran
+    execution_data = Column(JSON, nullable=True)              # Full Gemini execution plan output

@@ -6,6 +6,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
   BookOpen,
+  Brain,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
@@ -32,6 +33,21 @@ const NAV_ITEMS: NavItem[] = [
     label: "Opportunities",
     icon: <TrendingUp size={16} />,
     phase: 2,
+  },
+  {
+    path: "/agent-signals",
+    label: "Trade Signal (A1)",
+    icon: <Brain size={16} />,
+  },
+  {
+    path: "/market-open",
+    label: "Market Open (A2)",
+    icon: <TrendingUp size={16} />,
+  },
+  {
+    path: "/execution-planner",
+    label: "Execution Planner (A3)",
+    icon: <ClipboardList size={16} />,
   },
   { path: "/news-feed", label: "News Feed", icon: <Newspaper size={16} /> },
   {

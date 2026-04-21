@@ -20,7 +20,10 @@ def get_news(
     db: Session = Depends(get_db)
 ):
     """Get news articles with pagination and filtering."""
-    query = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.impact_score >= min_impact)
+    query = db.query(db_models.NewsArticle)
+    
+    if min_impact > 0:
+        query = query.filter(db_models.NewsArticle.impact_score >= min_impact)
     
     if symbol:
         query = query.filter(db_models.NewsArticle.affected_symbols.any(symbol))

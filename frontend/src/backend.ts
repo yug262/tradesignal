@@ -58,7 +58,7 @@ export const api = {
   },
 
   fetchNews() {
-    return request<{ message: string }>("/news/fetch", { method: "POST" });
+    return request<{ status: string; new_articles_saved?: number; message?: string }>("/agent/fetch-news", { method: "POST" });
   },
 
   getNewsGrouped() {
@@ -90,5 +90,42 @@ export const api = {
 
   getProcessingState() {
     return request<import("./types/trading").ProcessingState>("/dashboard/processing-state");
+  },
+
+  // ─── Stocks ────────────────────────────────────────────────────────
+  getStocksGroupedAnalysis() {
+    return request<any[]>("/stocks/grouped-analysis");
+  },
+
+  // ─── Agent ─────────────────────────────────────────────────────────
+  triggerAgentRun() {
+    return request<any>("/agent/run", { method: "POST" });
+  },
+
+  triggerConfirmationRun() {
+    return request<any>("/agent/confirm", { method: "POST" });
+  },
+
+  triggerExecutionRun() {
+    return request<any>("/agent/execute", { method: "POST" });
+  },
+
+  triggerFullPipeline() {
+    return request<any>("/agent/run-full-pipeline", { method: "POST" });
+  },
+
+  getAgentSignals(params?: { date?: string; signal_type?: string; trade_mode?: string; min_confidence?: number; confirmation_status?: string }) {
+    const qs = new URLSearchParams();
+    if (params?.date) qs.set("date", params.date);
+    if (params?.signal_type) qs.set("signal_type", params.signal_type);
+    if (params?.trade_mode) qs.set("trade_mode", params.trade_mode);
+    if (params?.min_confidence != null) qs.set("min_confidence", String(params.min_confidence));
+    if (params?.confirmation_status) qs.set("confirmation_status", params.confirmation_status);
+    const query = qs.toString();
+    return request<any>(`/agent/signals${query ? `?${query}` : ""}`);
+  },
+
+  getAgentStatus() {
+    return request<any>("/agent/status");
   },
 };

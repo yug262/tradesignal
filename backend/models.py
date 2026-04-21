@@ -4,25 +4,25 @@ Timestamps are in MILLISECONDS (epoch ms) for safe JS number handling.
 """
 
 from pydantic import BaseModel
-from typing import Optional, Any
+from typing import Optional, Any, List
 
 
 class NewsArticleRef(BaseModel):
     id: str
     title: str
-    description: str
+    description: Optional[str] = ""
     source: str
-    published_at: int          # milliseconds since epoch
-    analyzed_at: Optional[int] = 0
+    published_at: int
+    analyzed_at: Optional[int] = None
     image_url: Optional[str] = None
     impact_score: float = 0.0
     impact_summary: Optional[str] = ""
     executive_summary: Optional[str] = ""
     news_relevance: Optional[str] = "low"
     news_category: Optional[str] = "other"
-    affected_symbols: list[str]
-    processing_status: str     # "pending" | "processed" | "skipped"
-    raw_analysis_data: Any     # Can be JSON object or string
+    affected_symbols: Optional[List[str]] = []
+    processing_status: str
+    raw_analysis_data: Any = None
 
 
 class SystemConfig(BaseModel):
@@ -34,6 +34,9 @@ class SystemConfig(BaseModel):
     news_endpoint_url: str = "https://destiny-luxury-douche.ngrok-free.dev/api/indian_news?limit=1000&today_only=false&exclude_noisy=false&analyzed_only=false&offset=0"
     polling_interval_mins: int = 5
     processing_mode: str = "pre_market"
+    # Agent 3 position-sizing / risk boundaries
+    max_loss_per_trade_pct: float = 1.0     # Max % of total capital risked as loss per trade
+    max_capital_per_trade_pct: float = 20.0 # Max % of total capital allocated per trade (prevents over-concentration)
 
 
 class ProcessingState(BaseModel):
