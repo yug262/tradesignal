@@ -7,7 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from models import SystemConfig, ProcessingState
-from routers import news, config, dashboard, stocks, agent
+from routers import news, config, dashboard, stocks, agent, paper_trading
 import database
 import db_models
 
@@ -42,6 +42,7 @@ app.include_router(config.router)
 app.include_router(dashboard.router)
 app.include_router(stocks.router)
 app.include_router(agent.router)
+app.include_router(paper_trading.router)
 
 
 # ─── Lifecycle events ─────────────────────────────────────────────────────────

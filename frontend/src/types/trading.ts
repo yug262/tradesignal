@@ -205,3 +205,92 @@ export function formatTimestamp(ts: number): string {
     second: "2-digit",
   });
 }
+
+// ── Paper Trading Types ──────────────────────────────────────────────────────
+
+export interface PaperTrade {
+  id: string;
+  symbol: string;
+  action: "BUY" | "SELL";
+  entry_price: number;
+  exit_price: number | null;
+  quantity: number;
+  stop_loss: number;
+  target_price: number;
+  current_price: number | null;
+  pnl: number;
+  pnl_percentage: number;
+  status: "OPEN" | "CLOSED" | "CANCELLED";
+  confidence_score: number;
+  risk_level: string;
+  trade_reason: string;
+  exit_reason: string | null;
+  signal_id: string | null;
+  trade_mode: string;
+  risk_reward: string | null;
+  position_value: number;
+  max_loss_at_sl: number;
+  entry_time: number;
+  exit_time: number | null;
+  duration_ms: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Portfolio {
+  total_capital: number;
+  available_cash: number;
+  used_cash: number;
+  total_profit: number;
+  total_loss: number;
+  total_pnl: number;
+  todays_pnl: number;
+  win_rate: number;
+  total_trades: number;
+  open_trades: number;
+  closed_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  updated_at: number | null;
+}
+
+export interface MarketSentiment {
+  id: number;
+  symbol: string;
+  sector: string | null;
+  sentiment: string | null;
+  confidence_score: number;
+  news_reason: string | null;
+  event_strength: string | null;
+  final_verdict: string | null;
+  market_date: string | null;
+  updated_at: number | null;
+}
+
+export interface AgentLog {
+  id: number;
+  agent_name: string;
+  symbol: string | null;
+  signal: string | null;
+  confidence: number;
+  message: string | null;
+  details: Record<string, unknown> | null;
+  trade_id: string | null;
+  created_at: number;
+}
+
+export interface PaperTradingDashboard {
+  portfolio: Portfolio;
+  open_positions: PaperTrade[];
+  recent_closed: PaperTrade[];
+  recent_activity: AgentLog[];
+}
+
+export interface AnalyticsData {
+  portfolio_growth: { date: string; cumulative_pnl: number; trade_pnl: number; symbol: string }[];
+  daily_pnl: { date: string; pnl: number }[];
+  win_loss: { wins: number; losses: number; total: number };
+  exit_reasons: Record<string, number>;
+  symbol_performance: { symbol: string; pnl: number; trades: number; wins: number }[];
+}
+

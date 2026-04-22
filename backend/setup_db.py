@@ -118,6 +118,88 @@ def create_database():
                 CREATE INDEX IF NOT EXISTS idx_trade_signals_symbol ON trade_signals(symbol);
                 CREATE INDEX IF NOT EXISTS idx_trade_signals_market_date ON trade_signals(market_date);
             """,
+            "paper_trades": """
+                CREATE TABLE IF NOT EXISTS paper_trades (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    entry_price FLOAT NOT NULL,
+                    exit_price FLOAT,
+                    quantity INTEGER NOT NULL,
+                    stop_loss FLOAT NOT NULL,
+                    target_price FLOAT NOT NULL,
+                    current_price FLOAT,
+                    pnl FLOAT DEFAULT 0.0,
+                    pnl_percentage FLOAT DEFAULT 0.0,
+                    status TEXT DEFAULT 'OPEN',
+                    confidence_score FLOAT DEFAULT 0.0,
+                    risk_level TEXT,
+                    trade_reason TEXT,
+                    exit_reason TEXT,
+                    signal_id TEXT,
+                    trade_mode TEXT DEFAULT 'INTRADAY',
+                    risk_reward TEXT,
+                    position_value FLOAT DEFAULT 0.0,
+                    max_loss_at_sl FLOAT DEFAULT 0.0,
+                    entry_time BIGINT NOT NULL,
+                    exit_time BIGINT,
+                    created_at BIGINT NOT NULL,
+                    updated_at BIGINT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_paper_trades_symbol ON paper_trades(symbol);
+                CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
+                CREATE INDEX IF NOT EXISTS idx_paper_trades_signal_id ON paper_trades(signal_id);
+            """,
+            "portfolio": """
+                CREATE TABLE IF NOT EXISTS portfolio (
+                    id SERIAL PRIMARY KEY,
+                    total_capital FLOAT DEFAULT 100000.0,
+                    available_cash FLOAT DEFAULT 100000.0,
+                    used_cash FLOAT DEFAULT 0.0,
+                    total_profit FLOAT DEFAULT 0.0,
+                    total_loss FLOAT DEFAULT 0.0,
+                    total_pnl FLOAT DEFAULT 0.0,
+                    win_rate FLOAT DEFAULT 0.0,
+                    total_trades INTEGER DEFAULT 0,
+                    open_trades INTEGER DEFAULT 0,
+                    closed_trades INTEGER DEFAULT 0,
+                    winning_trades INTEGER DEFAULT 0,
+                    losing_trades INTEGER DEFAULT 0,
+                    todays_pnl FLOAT DEFAULT 0.0,
+                    todays_date TEXT,
+                    updated_at BIGINT
+                );
+            """,
+            "market_sentiment": """
+                CREATE TABLE IF NOT EXISTS market_sentiment (
+                    id SERIAL PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    sector TEXT,
+                    sentiment TEXT,
+                    confidence_score FLOAT DEFAULT 0.0,
+                    news_reason TEXT,
+                    event_strength TEXT,
+                    final_verdict TEXT,
+                    market_date TEXT,
+                    updated_at BIGINT
+                );
+                CREATE INDEX IF NOT EXISTS idx_market_sentiment_symbol ON market_sentiment(symbol);
+                CREATE INDEX IF NOT EXISTS idx_market_sentiment_date ON market_sentiment(market_date);
+            """,
+            "agent_logs": """
+                CREATE TABLE IF NOT EXISTS agent_logs (
+                    id SERIAL PRIMARY KEY,
+                    agent_name TEXT NOT NULL,
+                    symbol TEXT,
+                    signal TEXT,
+                    confidence FLOAT DEFAULT 0.0,
+                    message TEXT,
+                    details JSON,
+                    trade_id TEXT,
+                    created_at BIGINT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_logs_symbol ON agent_logs(symbol);
+            """,
         }
 
         for table_name, create_sql in tables.items():

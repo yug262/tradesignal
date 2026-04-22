@@ -103,6 +103,7 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
             db.query(db_models.DBTradeSignal)
             .filter(db_models.DBTradeSignal.execution_status == "planned")
             .filter(db_models.DBTradeSignal.market_date == today)
+            .order_by(db_models.DBTradeSignal.symbol) # Sort to prevent deadlocks
             .all()
         )
 
@@ -156,9 +157,13 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
                 trade.risk_monitor_status = decision
                 trade.risk_monitor_data = result
                 trade.risk_last_checked_at = _now_ms()
-                db.flush()
+                
+                # Commit after each trade to minimize lock contention and avoid deadlocks
+                db.commit()
 
             except Exception as e:
+                # If a single trade fails, rollback that transaction but continue others
+                db.rollback()
                 print(f"  [ERROR] Risk monitor failed for {trade.symbol}: {e}")
                 traceback.print_exc()
                 summary["errors"] += 1
@@ -168,8 +173,6 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
                     "decision": "ERROR",
                     "error": str(e),
                 })
-
-        db.commit()
         duration = _now_ms() - run_started
 
         return {

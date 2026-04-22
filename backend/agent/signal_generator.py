@@ -84,7 +84,8 @@ def run_full_analysis(db: Session = None) -> dict:
         # -- Step 2: Get recent news grouped by symbol --------------------
         print("\n[STEP 2] Collecting recent news from DB (smart calendar window)...")
         grouped_news = fetch_recent_news(db)
-        symbols = list(grouped_news.keys())
+        # SORT symbols alphabetically to prevent database deadlocks with other agents
+        symbols = sorted(list(grouped_news.keys()))
         print(f"   [OK] Found {sum(len(v) for v in grouped_news.values())} articles across {len(symbols)} symbols")
 
         if not symbols:
@@ -104,97 +105,122 @@ def run_full_analysis(db: Session = None) -> dict:
         stock_data_map = fetch_stock_data_for_symbols(symbols)
         print(f"   [OK] Got context for {len(stock_data_map)} symbols")
 
-        # -- Step 4: Analyze each symbol ----------------------------------
-        print(f"\n[STEP 4] Running Gemini Discovery analysis...")
+        # -- Step 4: Analyze each symbol (CONCURRENT — up to 5 in parallel) --
+        print(f"\n[STEP 4] Running Gemini Discovery analysis ({len(symbols)} symbols, concurrent)...")
         signals = []
         summary = _empty_summary()
 
-        for sym in symbols:
+        # ── Run Gemini calls concurrently ──────────────────────────────────
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+
+        def _analyze_one(sym: str) -> tuple[str, dict | None, list]:
+            """Run one Gemini analysis in a thread. Returns (symbol, result, article_ids)."""
             articles = grouped_news.get(sym, [])
             stock = stock_data_map.get(sym)
-
             if not stock:
                 print(f"   [SKIP] {sym}: No market context, skipping")
+                return sym, None, []
+            print(f"   -- Analyzing {sym} ({len(articles)} articles) --")
+            try:
+                result = analyze_stock(sym, articles, stock, market_date)
+                print(f"      [OK] {sym}: {result.get('final_verdict', '?')} "
+                      f"(confidence={result.get('confidence', 0)}, source={result.get('_source', '?')})")
+                return sym, result, articles
+            except Exception as e:
+                print(f"      [ERROR] {sym}: {e}")
+                return sym, None, articles
+
+        # Use up to 5 threads (Gemini free tier allows ~5 concurrent calls)
+        results_map = {}
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {pool.submit(_analyze_one, sym): sym for sym in symbols}
+            for future in as_completed(futures):
+                sym = futures[future]
+                try:
+                    s, result, articles = future.result()
+                    if result is not None:
+                        results_map[s] = (result, articles)
+                except Exception as e:
+                    print(f"   [ERROR] Thread for {sym} failed: {e}")
+
+        print(f"\n   [CONCURRENT] Got {len(results_map)}/{len(symbols)} results")
+
+        # ── Write results to DB sequentially (avoids deadlocks) ────────────
+        for sym in symbols:
+            if sym not in results_map:
                 continue
 
-            print(f"\n   -- Analyzing {sym} ({len(articles)} articles) --")
-            print(f"      [GEMINI] Running discovery analysis...")
-            gemini_result = analyze_stock(sym, articles, stock, market_date)
-            print(f"      [OK] Source: {gemini_result.get('_source', 'unknown')}")
+            gemini_result, articles = results_map[sym]
 
-            # Extract Discovery output fields (new schema)
+            # Extract Discovery output fields
             final_verdict = gemini_result.get("final_verdict", "NOISE")
             event_strength = gemini_result.get("event_strength", "WEAK")
-            freshness = gemini_result.get("freshness", "OLD")
-            directness = gemini_result.get("directness", "NONE")
-            is_material = gemini_result.get("is_material", False)
             confidence = gemini_result.get("confidence", 0)
 
-            print(f"      Verdict: {final_verdict} | Strength: {event_strength} | "
-                  f"Freshness: {freshness} | Material: {is_material}")
-            print(f"      Confidence: {confidence}")
-
-            # Map final_verdict to a DB-compatible signal_type
-            # IMPORTANT_EVENT → WATCH (Agent 2 will decide whether to trade)
-            # Everything else → NO_TRADE (not interesting enough to confirm)
             signal_type = _verdict_to_signal_type(final_verdict)
-
-            # trade_mode is unknown at Discovery stage — Agent 2 sets direction
             trade_mode = "NONE"
 
-            # Build signal record
             signal_id = f"sig-{sym}-{market_date}-{uuid.uuid4().hex[:6]}"
-
             signal_record = {
                 "id": signal_id,
                 "symbol": sym,
                 "signal_type": signal_type,
                 "trade_mode": trade_mode,
-                "entry_price": None,   # Discovery does NOT set trade levels
+                "entry_price": None,
                 "stop_loss": None,
                 "target_price": None,
                 "risk_reward": None,
                 "confidence": int(confidence),
-                "reasoning": gemini_result,   # Full Discovery output is the source of truth
+                "reasoning": gemini_result,
                 "news_article_ids": [a["id"] for a in articles],
-                "stock_snapshot": stock,
+                "stock_snapshot": stock_data_map.get(sym),
                 "generated_at": _now_ms(),
                 "market_date": market_date,
                 "gemini_source": gemini_result.get("_source", "unknown"),
             }
-
             signals.append(signal_record)
-
-            # Track summary
             _update_summary(summary, final_verdict, event_strength)
 
-            # Save to DB — replace any existing record for this symbol+date
-            db.query(db_models.DBTradeSignal).filter(
+            # Save to DB — upsert pattern
+            existing = db.query(db_models.DBTradeSignal).filter(
                 db_models.DBTradeSignal.symbol == sym,
                 db_models.DBTradeSignal.market_date == market_date
-            ).delete(synchronize_session=False)
+            ).first()
 
-            db_signal = db_models.DBTradeSignal(
-                id=signal_id,
-                symbol=sym,
-                signal_type=signal_type,
-                trade_mode=trade_mode,
-                entry_price=None,
-                stop_loss=None,
-                target_price=None,
-                risk_reward=None,
-                confidence=int(confidence),
-                reasoning=gemini_result,
-                news_article_ids=[a["id"] for a in articles],
-                stock_snapshot=stock,
-                generated_at=_now_ms(),
-                market_date=market_date,
-                status="pending_confirmation",
-                confirmation_status="pending",
-            )
-            db.add(db_signal)
+            if existing:
+                existing.signal_type = signal_type
+                existing.confidence = int(confidence)
+                existing.reasoning = gemini_result
+                existing.news_article_ids = [a["id"] for a in articles]
+                existing.stock_snapshot = stock_data_map.get(sym)
+                existing.generated_at = _now_ms()
+                if existing.status == "invalidated":
+                    existing.status = "pending_confirmation"
+                print(f"      [DB] Updated existing signal for {sym}")
+            else:
+                db_signal = db_models.DBTradeSignal(
+                    id=signal_id,
+                    symbol=sym,
+                    signal_type=signal_type,
+                    trade_mode=trade_mode,
+                    entry_price=None,
+                    stop_loss=None,
+                    target_price=None,
+                    risk_reward=None,
+                    confidence=int(confidence),
+                    reasoning=gemini_result,
+                    news_article_ids=[a["id"] for a in articles],
+                    stock_snapshot=stock_data_map.get(sym),
+                    generated_at=_now_ms(),
+                    market_date=market_date,
+                    status="pending_confirmation",
+                    confirmation_status="pending",
+                )
+                db.add(db_signal)
+                print(f"      [DB] Created new signal for {sym}")
 
-        db.commit()
+            # Commit after each symbol to minimize lock contention and avoid deadlocks
+            db.commit()
 
         duration = _now_ms() - started_at
         print(f"\n{'='*60}")

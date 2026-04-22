@@ -76,6 +76,7 @@ def run_market_open_confirmation(db: Session = None) -> dict:
             db.query(db_models.DBTradeSignal)
             .filter(db_models.DBTradeSignal.market_date == market_date)
             .filter(db_models.DBTradeSignal.confirmation_status == "pending")
+            .order_by(db_models.DBTradeSignal.symbol) # Sort to prevent deadlocks
             .all()
         )
 
@@ -279,7 +280,8 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                 "why": confirmation.get("why_tradable_or_not", ""),
             })
 
-        db.commit()
+            # Commit after each signal to minimize lock contention and avoid deadlocks
+            db.commit()
         duration = _now_ms() - started_at
 
         print(f"\n{'='*60}")

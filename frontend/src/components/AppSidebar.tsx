@@ -49,6 +49,11 @@ const NAV_ITEMS: NavItem[] = [
     label: "Execution Planner (A3)",
     icon: <ClipboardList size={16} />,
   },
+  {
+    path: "/paper-trading",
+    label: "Paper Trading",
+    icon: <TrendingUp size={16} />,
+  },
   { path: "/news-feed", label: "News Feed", icon: <Newspaper size={16} /> },
   {
     path: "/grouping",

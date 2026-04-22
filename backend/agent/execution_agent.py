@@ -55,6 +55,7 @@ def run_execution_planner(db: Session = None) -> dict:
             .filter(db_models.DBTradeSignal.market_date == market_date)
             .filter(db_models.DBTradeSignal.confirmation_status == "confirmed")
             .filter(db_models.DBTradeSignal.execution_status == "pending")
+            .order_by(db_models.DBTradeSignal.symbol) # Sort to prevent deadlocks
             .all()
         )
 
@@ -250,8 +251,20 @@ def run_execution_planner(db: Session = None) -> dict:
                 cap_pct = ps.get("capital_used_pct", 0)
                 print(f"      [SIZING] {shares} shares @ Rs.{ep.get('entry_price', 0)} "
                       f"= Rs.{pos_inr:,.0f} ({cap_pct}% of capital)")
+
+                # Auto-create paper trade for ENTER NOW decisions
+                from agent.paper_trading_engine import auto_create_from_execution, _log_action
+                pt_result = auto_create_from_execution(db, sig)
+                if pt_result and pt_result.get("success"):
+                    print(f"      [PAPER TRADE] Auto-created: {pt_result['trade_id']}")
+                elif pt_result and not pt_result.get("success"):
+                    print(f"      [PAPER TRADE] Skipped: {pt_result.get('error', 'unknown')}")
+                    
+                _log_action(db, "Agent 3 (Execution)", sig.symbol, action, f"Execution planned: {exec_dec} ({action}). SL: {sl.get('price')}, Target: {tg.get('price')}", confidence=execution_plan.get('confidence', 0))
             else:
                 summary["avoided"] += 1
+                from agent.paper_trading_engine import _log_action
+                _log_action(db, "Agent 3 (Execution)", sig.symbol, action, f"Execution avoided: {exec_dec}", confidence=execution_plan.get('confidence', 0))
 
             results.append({
                 "symbol": sig.symbol,
@@ -260,8 +273,9 @@ def run_execution_planner(db: Session = None) -> dict:
                 "confidence": execution_plan.get("confidence", 0),
                 "why": execution_plan.get("why_now_or_why_wait", "")
             })
-
-        db.commit()
+            
+            # Commit after each signal to minimize lock contention and avoid deadlocks
+            db.commit()
         duration = _now_ms() - started_at
         
         print(f"\n{'='*60}")

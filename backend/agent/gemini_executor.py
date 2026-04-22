@@ -4,6 +4,7 @@ import math
 from datetime import datetime, timezone
 from typing import Any, Dict, Tuple
 from datetime import timedelta
+import httpx
 
 from google import genai
 from google.genai import types

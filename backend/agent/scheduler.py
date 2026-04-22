@@ -276,6 +276,18 @@ def _risk_monitor_job():
         print(f"[RISK MONITOR] Error: {e}")
 
 
+def _paper_trade_monitor_job():
+    """Job 6: Monitor open paper trades — check SL/target and auto-close."""
+    from agent.paper_trading_engine import monitor_open_positions
+    try:
+        result = monitor_open_positions()
+        actions = result.get("actions_taken", 0)
+        if actions > 0:
+            print(f"[PAPER TRADE MONITOR] {actions} position(s) auto-closed")
+    except Exception as e:
+        print(f"[PAPER TRADE MONITOR] Error: {e}")
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Scheduler Init / Shutdown
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -336,6 +348,15 @@ def init_scheduler():
         replace_existing=True,
     )
 
+    # ── JOB 6: Paper Trade Monitor (every 15s during market hours) ────
+    scheduler.add_job(
+        _paper_trade_monitor_job,
+        trigger=IntervalTrigger(seconds=15, timezone=IST_TZ),
+        id="paper_trade_monitor",
+        name="Paper Trade Position Monitor (every 15s, market hours)",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _is_started = True
 
@@ -345,6 +366,7 @@ def init_scheduler():
     print(f"  3. Discovery Agent (Agent 1)     : 08:30 AM IST (Mon-Fri trading days)")
     print(f"  4. Market Open Confirm (Agent 2) : 09:16 AM IST (Mon-Fri trading days)")
     print(f"  5. Risk Monitor (Agent 4)        : every 30s (09:16-15:30 Mon-Fri)")
+    print(f"  6. Paper Trade Monitor           : every 15s (09:16-15:30 Mon-Fri)")
     print(f"[SCHEDULER] ==================================\n")
 
 
