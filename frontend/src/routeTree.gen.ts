@@ -11,6 +11,7 @@
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TradePlannerRouteImport } from './routes/trade-planner'
 import { Route as SettingsRouteImport } from './routes/settings'
+import { Route as PaperTradingRouteImport } from './routes/paper-trading'
 import { Route as OpportunitiesRouteImport } from './routes/opportunities'
 import { Route as NewsFeedRouteImport } from './routes/news-feed'
 import { Route as ModeAnalysisRouteImport } from './routes/mode-analysis'
@@ -32,6 +33,11 @@ const TradePlannerRoute = TradePlannerRouteImport.update({
 const SettingsRoute = SettingsRouteImport.update({
   id: '/settings',
   path: '/settings',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const PaperTradingRoute = PaperTradingRouteImport.update({
+  id: '/paper-trading',
+  path: '/paper-trading',
   getParentRoute: () => rootRouteImport,
 } as any)
 const OpportunitiesRoute = OpportunitiesRouteImport.update({
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/mode-analysis': typeof ModeAnalysisRoute
   '/news-feed': typeof NewsFeedRoute
   '/opportunities': typeof OpportunitiesRoute
+  '/paper-trading': typeof PaperTradingRoute
   '/settings': typeof SettingsRoute
   '/trade-planner': typeof TradePlannerRoute
   '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
@@ -123,6 +130,7 @@ export interface FileRoutesByTo {
   '/mode-analysis': typeof ModeAnalysisRoute
   '/news-feed': typeof NewsFeedRoute
   '/opportunities': typeof OpportunitiesRoute
+  '/paper-trading': typeof PaperTradingRoute
   '/settings': typeof SettingsRoute
   '/trade-planner': typeof TradePlannerRoute
   '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
@@ -140,6 +148,7 @@ export interface FileRoutesById {
   '/mode-analysis': typeof ModeAnalysisRoute
   '/news-feed': typeof NewsFeedRoute
   '/opportunities': typeof OpportunitiesRoute
+  '/paper-trading': typeof PaperTradingRoute
   '/settings': typeof SettingsRoute
   '/trade-planner': typeof TradePlannerRoute
   '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
@@ -158,6 +167,7 @@ export interface FileRouteTypes {
     | '/mode-analysis'
     | '/news-feed'
     | '/opportunities'
+    | '/paper-trading'
     | '/settings'
     | '/trade-planner'
     | '/symbols/$symbolId'
@@ -174,6 +184,7 @@ export interface FileRouteTypes {
     | '/mode-analysis'
     | '/news-feed'
     | '/opportunities'
+    | '/paper-trading'
     | '/settings'
     | '/trade-planner'
     | '/symbols/$symbolId'
@@ -190,6 +201,7 @@ export interface FileRouteTypes {
     | '/mode-analysis'
     | '/news-feed'
     | '/opportunities'
+    | '/paper-trading'
     | '/settings'
     | '/trade-planner'
     | '/symbols/$symbolId'
@@ -207,6 +219,7 @@ export interface RootRouteChildren {
   ModeAnalysisRoute: typeof ModeAnalysisRoute
   NewsFeedRoute: typeof NewsFeedRoute
   OpportunitiesRoute: typeof OpportunitiesRoute
+  PaperTradingRoute: typeof PaperTradingRoute
   SettingsRoute: typeof SettingsRoute
   TradePlannerRoute: typeof TradePlannerRoute
   SymbolsSymbolIdRoute: typeof SymbolsSymbolIdRoute
@@ -226,6 +239,13 @@ declare module '@tanstack/react-router' {
       path: '/settings'
       fullPath: '/settings'
       preLoaderRoute: typeof SettingsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/paper-trading': {
+      id: '/paper-trading'
+      path: '/paper-trading'
+      fullPath: '/paper-trading'
+      preLoaderRoute: typeof PaperTradingRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/opportunities': {
@@ -327,6 +347,7 @@ const rootRouteChildren: RootRouteChildren = {
   ModeAnalysisRoute: ModeAnalysisRoute,
   NewsFeedRoute: NewsFeedRoute,
   OpportunitiesRoute: OpportunitiesRoute,
+  PaperTradingRoute: PaperTradingRoute,
   SettingsRoute: SettingsRoute,
   TradePlannerRoute: TradePlannerRoute,
   SymbolsSymbolIdRoute: SymbolsSymbolIdRoute,

@@ -1,11 +1,19 @@
-"""Gemini-powered Pre-Market Intelligence Analyzer (Agent 1).
+"""Gemini-powered Discovery Agent (Agent 1).
 
-Takes news bundles grouped by symbol + rich market context (previous close,
-5-day/20-day averages, trend, 52-week range) and produces a watchlist
-assessment with directional bias, gap expectations, and confirmation rules.
+Reads news bundles grouped by symbol and produces a pure news-understanding
+assessment.  This layer answers ONE question:
 
-This is NOT a trade signal generator — it produces intelligence that
-Agent 2 will later confirm with live market-open data.
+    "What actually happened, and does it meaningfully matter?"
+
+It does NOT:
+  - predict direction (bullish / bearish)
+  - predict gap up / gap down
+  - give watchlist or trade advice
+  - produce entry / stop / target levels
+  - analyse price, chart, volume, or technical structure
+
+Agent 2 (Market Open Confirmation) receives this output and decides whether
+the thesis still holds after the actual open.
 """
 
 import os
@@ -19,107 +27,189 @@ load_dotenv()
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
-# Create client
+# Create client once at module load
 _client = None
 if GEMINI_API_KEY and GEMINI_API_KEY.strip():
     _client = genai.Client(api_key=GEMINI_API_KEY)
 
 
-# ── System Instruction ──────────────────────────────────────────────────────
+# ── System Instruction ───────────────────────────────────────────────────────
 
-SYSTEM_INSTRUCTION = """You are a sharp Indian stock market analyst who explains things in SIMPLE, EASY-TO-READ language.
+SYSTEM_INSTRUCTION = """You are a sharp Indian stock market news analyst who explains things in clear, simple, natural English.
 
-Your job: Look at overnight news + the stock's recent price history, and tell the trader whether this stock is worth watching today or not.
+Your job is to carefully read news and explain what actually happened and whether it is important for the company.
 
 IMPORTANT — HOW TO WRITE:
-- Write like you're explaining to a friend who trades but isn't a finance expert.
-- Use simple, short sentences. No jargon. No fancy words.
-- Instead of "institutional participation driving momentum" → say "big players are buying, which is pushing the price up"
-- Instead of "valuation re-rating catalyst" → say "this news could make people think the stock is worth more"
-- Instead of "potential for mean reversion" → say "it has fallen a lot recently, so there's a chance it bounces back"
-- Be direct and honest. Say "this is old news, already priced in" or "this is big, the stock will likely react"
-- Use everyday Hindi-English trading lingo when it feels natural (gap up, gap down, circuit, volume, etc.)
+- Write like you're explaining to a smart friend who follows markets but is not an expert.
+- Use clear, simple sentences. No jargon. No complicated finance terms.
+- Keep it natural and human — not robotic, not overly formal.
+- Avoid buzzwords and generic phrases.
+- Be direct and honest. Say things like:
+  - "This is old news, nothing new here"
+  - "This is a meaningful development for the company"
+  - "This sounds big but does not really change much"
 
-ANALYSIS RULES:
-1. You are NOT giving trade signals (no entry/SL/target). Just tell them if the stock deserves attention today.
-2. Be honest. Most news is noise. Only flag stocks where something genuinely important happened.
-3. "STALE NO EDGE" is a perfectly fine answer. Old news = no edge. Say it clearly.
-4. Tell them if it's a DIRECT hit (the company itself got news) or INDIRECT (sector or market-wide news).
-5. Look at the stock's recent trend. If it's already up 15% in 20 days, a bullish news has less room to run.
-6. If volume has been high recently, the news might already be partially absorbed.
-7. NSE timing: market opens at 9:15 AM, pre-open session 9:00-9:08, circuit limits exist.
-8. Respond ONLY with valid JSON. No markdown, no extra text outside JSON."""
+STRICT RULES:
+- Do NOT analyze stock price, charts, trend, or volume
+- Do NOT predict market movement or gap up/down
+- Do NOT give trading advice or signals
+- Focus ONLY on the news and its real business impact
+- Be realistic — most news is not important
+
+Respond ONLY with valid JSON. No markdown, no extra text."""
 
 
-# ── Analysis Prompt Template ────────────────────────────────────────────────
+# ── Analysis Prompt Template ─────────────────────────────────────────────────
 
-ANALYSIS_PROMPT = """Analyze {symbol} ({company_name}) for pre-market intelligence on {market_date}.
+ANALYSIS_PROMPT = """You are a senior Indian equity research analyst. Read the news bundle below and produce a grounded business analysis of what it means for {symbol} ({company_name}) on {market_date}.
 
-=== NEWS BUNDLE ({article_count} articles) ===
+Your only source of truth is the news bundle. Do not use outside knowledge. Do not infer facts not clearly stated in the bundle.
+
+<news_bundle articles="{article_count}">
 {news_section}
+</news_bundle>
 
-=== BUNDLE META ===
-Total articles about this stock: {article_count}
-Distinct events detected: {distinct_event_count}
-Multiple catalysts: {has_multiple_catalysts}
-Latest article: {latest_article_time}
-Earliest article: {earliest_article_time}
+<examples>
+  <example>
+    <input>
+      Symbol: DIXON, Company: Dixon Technologies, Date: 2024-11-14
+      Bundle (2 articles):
+      [1] Dixon Technologies wins a Rs 1,200 crore contract from a global electronics brand to manufacture smartphones under the PLI scheme at its Noida facility. Production begins Q1 FY26.
+      [2] Dixon secures large smartphone manufacturing deal worth Rs 1,200 crore under PLI scheme at existing Noida plant.
+    </input>
+    <o>
+      {{
+        "event_summary": "Dixon Technologies won a Rs 1,200 crore smartphone manufacturing contract under the PLI scheme, with production starting Q1 FY26.",
+        "detailed_explanation": "Dixon has secured a new order to manufacture smartphones for an undisclosed global brand at its Noida facility. Both articles cover the same event. The contract is valued at Rs 1,200 crore and falls under the PLI scheme. Production begins Q1 FY26, so revenue recognition is roughly two quarters away. This directly adds to Dixon's order book and uses existing capacity.",
+        "event_type": "corporate_event",
+        "event_strength": "STRONG",
+        "directness": "DIRECT",
+        "is_material": true,
+        "impact_analysis": "A Rs 1,200 crore contract is a meaningful addition to Dixon's revenue pipeline. Revenue will flow from Q1 FY26 onward. Using existing Noida capacity limits incremental capex. PLI scheme eligibility may provide margin support through incentive payouts. The main uncertainty is whether volumes are guaranteed or indicative, and the brand is not disclosed.",
+        "key_positive_factors": [
+          "Rs 1,200 crore contract directly adds to order book",
+          "PLI scheme eligibility may provide additional margin support",
+          "Uses existing capacity, limiting capex requirement"
+        ],
+        "key_risks": [
+          "Brand identity undisclosed — counterparty risk cannot be assessed",
+          "Revenue recognition is 2+ quarters away — execution risk remains"
+        ],
+        "confidence": 82,
+        "final_verdict": "IMPORTANT_EVENT",
+        "reasoning_summary": "This is a direct, specific order win with a clear value and timeline. Both articles confirm the same event. The contract is large and material. Only counterparty identity and volume certainty are unknown."
+      }}
+    </o>
+  </example>
 
-=== MARKET CONTEXT (Previous Session Data) ===
-Previous Close: Rs.{previous_close}
-Previous Day Open: Rs.{prev_day_open}
-Previous Day High: Rs.{prev_day_high}
-Previous Day Low: Rs.{prev_day_low}
-Previous Day Volume: {prev_day_volume}
+  <example>
+    <input>
+      Symbol: APOLLOHOSP, Company: Apollo Hospitals, Date: 2024-11-14
+      Bundle (1 article):
+      [1] India's healthcare sector is expected to grow 12% annually over five years, driven by rising insurance penetration and an ageing population, per a CRISIL report.
+    </input>
+    <o>
+      {{
+        "event_summary": "CRISIL projects 12% annual growth for India's healthcare sector over five years.",
+        "detailed_explanation": "This is a sector-level research report. Apollo Hospitals is not mentioned. The growth drivers cited are general tailwinds that apply across all hospital chains. No company-specific data or development is present in the bundle.",
+        "event_type": "sector",
+        "event_strength": "WEAK",
+        "directness": "INDIRECT",
+        "is_material": false,
+        "impact_analysis": "No specific impact on Apollo Hospitals can be established. The report is a general industry observation. No change to revenue, margins, capacity, or operations can be derived from this bundle.",
+        "key_positive_factors": [],
+        "key_risks": [],
+        "confidence": 30,
+        "final_verdict": "NOISE",
+        "reasoning_summary": "Sector research note with no Apollo-specific content. No transmission path to the company's business is described. General industry growth projections are background context, not a business development."
+      }}
+    </o>
+  </example>
+</examples>
 
-Average Volume (5-day): {avg_volume_5d}
-Average Volume (20-day): {avg_volume_20d}
+<reasoning_gates>
+Work through these before writing the JSON. Do not output this reasoning.
 
-Change 1-Day: {change_1d_percent}%
-Change 5-Day: {change_5d_percent}%
-Change 20-Day: {change_20d_percent}%
+GATE 1 — EMPTY BUNDLE
+If the bundle has no substantive news about {company_name}, output:
+{{"event_summary": "No substantive news found.", "detailed_explanation": "The bundle contained no articles with meaningful information about {company_name}.", "event_type": "other", "event_strength": "WEAK", "directness": "NONE", "is_material": false, "impact_analysis": "No impact can be assessed.", "key_positive_factors": [], "key_risks": [], "confidence": 0, "final_verdict": "NOISE", "reasoning_summary": "No news was available to analyze."}}
+Stop here.
 
-Recent Trend: {recent_trend}
+GATE 2 — DEDUPLICATION AND CONFLICTS
+Merge articles covering the same event into one understanding. If two articles contradict each other on a material fact, note the conflict in detailed_explanation, do not assert the disputed fact as certain in impact_analysis, and reduce confidence by at least 20 points.
 
-Distance from 20-Day High: {distance_from_20d_high_percent}%
-Distance from 20-Day Low: {distance_from_20d_low_percent}%
+GATE 3 — DIRECTNESS
+- DIRECT = {company_name} is the subject or is explicitly named as affected with specific business consequences stated in the bundle
+- INDIRECT = the event affects the sector, macro, peers, or ecosystem — {company_name} may be influenced but no specific transmission is stated
+- NONE = no meaningful connection exists
 
-52-Week High: Rs.{w52_high}
-52-Week Low: Rs.{w52_low}
+If NONE → set is_material = false, event_strength = "WEAK", final_verdict = "NOISE". Stop. Write the JSON.
+INDIRECT events are almost never STRONG.
 
-=== THINK ABOUT THESE BEFORE ANSWERING ===
-1. WHAT HAPPENED: What's the actual news? Is it genuinely new or just rehashed/old stuff?
-2. HOW DIRECT: Does this news hit THIS company specifically, or is it a general sector/market thing?
-3. HOW FRESH: Was this news published recently enough to move the stock at open? Or is it 12+ hours old?
-4. WHERE IS THE STOCK NOW: Is it near its recent highs (less room to go up), near lows (could bounce), or somewhere in between?
-5. VOLUME CLUES: Has trading volume been increasing (smart money might be getting in) or drying up?
-6. OPENING PREDICTION: Based on the news + where the stock is, will it gap up, gap down, or open flat?
-7. WHAT WOULD PROVE YOU WRONG: Under what conditions should the trader ignore this completely?
+GATE 4 — MATERIALITY AND STRENGTH
+Does this change something real in the company's business? (revenue, margins, costs, capacity, orders, regulation, liquidity, competitive position)
+- STRONG = clear, specific, company-relevant development with demonstrable business implications
+- MODERATE = real but limited, mixed, or only partially clear
+- WEAK = vague, indirect, repetitive, promotional, or low-consequence
 
-IMPORTANT: Write ALL text fields in SIMPLE, EASY-TO-UNDERSTAND language. Like you're texting a trader friend.
+If impact is weak, unclear, speculative, or trivial → is_material = false.
 
-Respond with this exact JSON structure:
+GATE 5 — VERDICT
+IMPORTANT_EVENT requires all of the following:
+- event_strength is STRONG
+- is_material is true
+- Evidence is concrete, not commentary
+- For DIRECT events: the above three conditions are sufficient
+- For INDIRECT events: the bundle must also explicitly name {company_name} as affected with clear business consequences
+
+When in doubt, step down. Most news is MODERATE or MINOR. Most market news is NOISE.
+
+CONFIDENCE SCALE
+- 85–100 = multiple corroborating articles, specific facts, named figures, clear company attribution
+- 65–84 = one solid article with specific details
+- 45–64 = one article, some specifics, incomplete or partially unclear
+- 25–44 = vague reporting, no concrete details, indirect sourcing
+- 0–24 = almost no usable information in the bundle
+Reduce by 20 if articles conflict on a material fact.
+</reasoning_gates>
+
+<output_contract>
+Respond ONLY with a valid JSON object. No markdown. No preamble. No trailing text.
+Write all string fields in plain, simple English — no jargon, no hedging, no filler.
+
 {{
-  "decision": "IGNORE" or "WATCH INTRADAY" or "WATCH DELIVERY" or "WATCH BOTH" or "STALE NO EDGE",
-  "trade_preference": "INTRADAY" or "DELIVERY" or "BOTH" or "NONE",
-  "direction_bias": "BULLISH" or "BEARISH" or "NEUTRAL" or "MIXED",
-  "gap_expectation": "LIKELY GAP UP" or "LIKELY GAP DOWN" or "FLAT TO MUTED" or "UNCLEAR",
-  "priority": "HIGH" or "MEDIUM" or "LOW",
-  "event_summary": "One simple sentence — what happened? Write it so anyone can understand in 3 seconds.",
-  "event_strength": "STRONG" or "MODERATE" or "WEAK",
-  "directness": "DIRECT" or "INDIRECT" or "WEAK" or "NONE",
-  "confidence": 0 to 100,
-  "why_it_matters": "2-3 simple sentences — why should a trader care about this? How does it affect the company's business or stock price? No jargon.",
-  "key_drivers": ["simple reason 1 why this could work", "simple reason 2"],
-  "risks": ["simple risk 1 — what could go wrong", "simple risk 2"],
-  "open_expectation": "2-3 simple sentences — what do you expect to happen when market opens at 9:15? Will it gap up/down? Will there be heavy buying/selling? Keep it conversational.",
-  "open_confirmation_needed": ["what to check at market open — e.g. 'stock should open above Rs.150 with high volume'", "another check"],
-  "invalid_if": ["when to completely skip this — e.g. 'if it opens flat with no volume, the news is priced in'", "another kill condition"],
-  "final_summary": "A short paragraph — talk to the trader like a friend. What should they do? Watch it? Ignore it? What's the bottom line? Keep it real and honest."
-}}"""
+  "event_summary": string,
+  "detailed_explanation": string,
+  "event_type": "corporate_event" | "macro" | "sector" | "regulatory" | "other",
+  "event_strength": "STRONG" | "MODERATE" | "WEAK",
+  "directness": "DIRECT" | "INDIRECT" | "NONE",
+  "is_material": boolean,
+  "impact_analysis": string,
+  "key_positive_factors": [string],
+  "key_risks": [string],
+  "confidence": integer,
+  "final_verdict": "IMPORTANT_EVENT" | "MODERATE_EVENT" | "MINOR_EVENT" | "NOISE",
+  "reasoning_summary": string
+}}
+
+Cross-field rules:
+- NONE → is_material: false, event_strength: "WEAK", final_verdict: "NOISE"
+- is_material: false → final_verdict cannot be "IMPORTANT_EVENT"
+- event_strength: "STRONG" → is_material must be true
+- key_positive_factors and key_risks: maximum 3 items each
+</output_contract>
+
+<hard_prohibitions>
+NEVER mention stock price, chart patterns, gap, momentum, volume, VWAP, technical levels, breakout, pullback, support, resistance, or trend.
+NEVER predict whether the stock will move up, down, react strongly, or gap.
+NEVER use directional market language: "bullish", "bearish", "positive for the stock", "negative for the stock", "market may react".
+NEVER give a trading signal, recommendation, watchlist call, or entry/exit opinion.
+NEVER fabricate facts, numbers, timelines, or context not present in the bundle.
+NEVER produce output belonging to a downstream agent: no scoring, no trade setup, no gap prediction, no watchlist classification.
+</hard_prohibitions>"""
 
 
-# ── Helper Functions ────────────────────────────────────────────────────────
+# ── Helper Functions ─────────────────────────────────────────────────────────
 
 def _format_news_section(articles: list[dict]) -> str:
     """Format articles into a readable text block for the prompt."""
@@ -166,16 +256,7 @@ def _format_news_section(articles: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
-def _safe_val(val, default="N/A"):
-    """Return val formatted or default if None."""
-    if val is None:
-        return default
-    if isinstance(val, float):
-        return round(val, 2)
-    return val
-
-
-# ── Main Analysis Function ──────────────────────────────────────────────────
+# ── Main Analysis Function ───────────────────────────────────────────────────
 
 def analyze_stock(
     symbol: str,
@@ -184,54 +265,31 @@ def analyze_stock(
     market_date: str,
 ) -> dict:
     """
-    Use Gemini to produce a pre-market intelligence assessment.
+    Use Gemini to produce a pure news-understanding assessment (Discovery Layer).
 
     Args:
         symbol: NSE stock symbol
         articles: List of news article dicts for this stock
-        stock_data: Full market context dict (prev close, volumes, trends)
+        stock_data: Market context dict — used only for company_name here;
+                    price/volume data is NOT injected into the Discovery prompt
         market_date: Today's date YYYY-MM-DD
 
     Returns:
-        Dict with the watchlist assessment following AGENT1_OUTPUT_TEMPLATE.
+        Dict conforming to the Discovery output schema:
+        {
+          event_summary, detailed_explanation, event_type, event_strength,
+          freshness, directness, is_material, impact_analysis,
+          key_positive_factors, key_risks, confidence,
+          final_verdict, reasoning_summary,
+          _source, _model
+        }
     """
     if not _client:
-        return _fallback_analysis(symbol, articles, stock_data)
+        return _fallback_analysis(symbol, articles)
 
     news_section = _format_news_section(articles)
 
-    # Build bundle meta
-    timestamps = []
-    for a in articles:
-        pub = a.get("published_at")
-        if isinstance(pub, (int, float)) and pub > 0:
-            timestamps.append(pub)
-
-    from datetime import datetime, timezone, timedelta
-    IST = timezone(timedelta(hours=5, minutes=30))
-
-    latest_time = "N/A"
-    earliest_time = "N/A"
-    if timestamps:
-        try:
-            latest_time = datetime.fromtimestamp(max(timestamps) / 1000, tz=IST).strftime("%Y-%m-%d %H:%M IST")
-            earliest_time = datetime.fromtimestamp(min(timestamps) / 1000, tz=IST).strftime("%Y-%m-%d %H:%M IST")
-        except Exception:
-            pass
-
-    # Better distinct event logic: Group by first 4 words of title to avoid minor variations
-    titles = [a.get("title", "").strip() for a in articles if a.get("title")]
-    unique_topics = set()
-    for t in titles:
-        # Normalize and take first 4 words as a signature
-        sig = " ".join(t.lower().replace(":", " ").split()[:4])
-        if sig:
-            unique_topics.add(sig)
-    
-    distinct_events = len(unique_topics) if unique_topics else (1 if articles else 0)
-    has_multiple = distinct_events >= 2
-
-    # Company name from stock data or symbol
+    # Company name for context
     company_name = stock_data.get("company_name", symbol)
 
     prompt = ANALYSIS_PROMPT.format(
@@ -240,25 +298,6 @@ def analyze_stock(
         market_date=market_date,
         article_count=len(articles),
         news_section=news_section,
-        distinct_event_count=distinct_events,
-        has_multiple_catalysts=has_multiple,
-        latest_article_time=latest_time,
-        earliest_article_time=earliest_time,
-        previous_close=_safe_val(stock_data.get("previous_close", stock_data.get("last_close"))),
-        prev_day_open=_safe_val(stock_data.get("prev_day_open")),
-        prev_day_high=_safe_val(stock_data.get("prev_day_high", stock_data.get("past_day_high"))),
-        prev_day_low=_safe_val(stock_data.get("prev_day_low", stock_data.get("past_day_low"))),
-        prev_day_volume=_safe_val(stock_data.get("prev_day_volume")),
-        avg_volume_5d=_safe_val(stock_data.get("avg_volume_5d")),
-        avg_volume_20d=_safe_val(stock_data.get("avg_volume_20d")),
-        change_1d_percent=_safe_val(stock_data.get("change_1d_percent", stock_data.get("current_change_pct"))),
-        change_5d_percent=_safe_val(stock_data.get("change_5d_percent")),
-        change_20d_percent=_safe_val(stock_data.get("change_20d_percent")),
-        recent_trend=_safe_val(stock_data.get("recent_trend")),
-        distance_from_20d_high_percent=_safe_val(stock_data.get("distance_from_20d_high_percent")),
-        distance_from_20d_low_percent=_safe_val(stock_data.get("distance_from_20d_low_percent")),
-        w52_high=_safe_val(stock_data.get("52_week_high")),
-        w52_low=_safe_val(stock_data.get("52_week_low")),
     )
 
     try:
@@ -283,12 +322,12 @@ def analyze_stock(
         text = text.strip()
 
         result = json.loads(text)
-        
+
         # Normalize confidence to integer 0-100
         conf = result.get("confidence", 0)
         try:
             if isinstance(conf, (float, int)):
-                if 0 <= conf <= 1.0 and isinstance(conf, float):
+                if 0 < conf <= 1.0 and isinstance(conf, float):
                     result["confidence"] = int(conf * 100)
                 else:
                     result["confidence"] = int(conf)
@@ -296,43 +335,74 @@ def analyze_stock(
                 result["confidence"] = int(float(conf))
             else:
                 result["confidence"] = 50
-        except:
+        except Exception:
             result["confidence"] = 50
-            
+
         # Clamp confidence
         result["confidence"] = max(0, min(100, result["confidence"]))
-        
+
         result["_source"] = "gemini"
         result["_model"] = MODEL_NAME
         return result
 
     except json.JSONDecodeError as e:
         print(f"  [WARN] Gemini returned invalid JSON for {symbol}: {e}")
-        return _fallback_analysis(symbol, articles, stock_data)
+        return _fallback_analysis(symbol, articles)
     except Exception as e:
         print(f"  [WARN] Gemini API error for {symbol}: {e}")
-        return _fallback_analysis(symbol, articles, stock_data)
+        return _fallback_analysis(symbol, articles)
 
 
-def _fallback_analysis(symbol: str, articles: list[dict], stock_data: dict) -> dict:
-    """Generate a fallback analysis when Gemini is unavailable."""
+def _fallback_analysis(symbol: str, articles: list[dict]) -> dict:
+    """
+    Rule-based fallback when Gemini is unavailable.
+
+    Returns the same Discovery schema as the Gemini path, defaulting to
+    conservative / low-confidence values.  Does NOT include any old
+    directional, watchlist, or trade-related fields.
+    """
+    article_count = len(articles)
+
+    if article_count == 0:
+        event_summary = "No news articles found for this symbol."
+        event_strength = "WEAK"
+        freshness = "OLD"
+        directness = "NONE"
+        is_material = False
+        final_verdict = "NOISE"
+        reasoning_summary = (
+            "No news was available. Gemini API was also unavailable. "
+            "This symbol cannot be assessed without AI reasoning."
+        )
+    else:
+        event_summary = (
+            f"Gemini API unavailable — {article_count} article(s) collected but not analyzed."
+        )
+        event_strength = "WEAK"
+        freshness = "FRESH"
+        directness = "INDIRECT"
+        is_material = False
+        final_verdict = "MINOR_EVENT"
+        reasoning_summary = (
+            "Gemini API was unavailable so the news could not be properly assessed. "
+            f"There are {article_count} article(s) in the bundle. "
+            "Treat this symbol as unconfirmed until AI analysis is available."
+        )
+
     return {
-        "decision": "STALE NO EDGE",
-        "trade_preference": "NONE",
-        "direction_bias": "NEUTRAL",
-        "gap_expectation": "UNCLEAR",
-        "priority": "LOW",
-        "event_summary": "Gemini API unavailable — cannot assess event.",
-        "event_strength": "WEAK",
-        "directness": "NONE",
+        "event_summary": event_summary,
+        "detailed_explanation": "AI analysis unavailable. Cannot determine what happened without Gemini.",
+        "event_type": "other",
+        "event_strength": event_strength,
+        "freshness": freshness,
+        "directness": directness,
+        "is_material": is_material,
+        "impact_analysis": "Cannot assess business impact without AI reasoning.",
+        "key_positive_factors": [],
+        "key_risks": ["No AI analysis available — treat as unconfirmed"],
         "confidence": 0,
-        "why_it_matters": "Cannot determine without AI reasoning.",
-        "key_drivers": [],
-        "risks": ["No AI analysis available"],
-        "open_expectation": "Cannot predict without analysis.",
-        "open_confirmation_needed": [],
-        "invalid_if": [],
-        "final_summary": "Gemini API was unavailable. This stock requires manual review.",
+        "final_verdict": final_verdict,
+        "reasoning_summary": reasoning_summary,
         "_source": "fallback",
         "_model": "rule_engine_only",
     }

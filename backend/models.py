@@ -59,9 +59,35 @@ class DashboardSummary(BaseModel):
     endpoint_status: str = "mock"  # "connected" | "mock" | "error"
 
 
+
 class PaginatedNewsResponse(BaseModel):
     items: list[NewsArticleRef]
     page: int
     page_size: int
     total: int
     has_more: bool
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PAPER TRADING MODELS
+# ═══════════════════════════════════════════════════════════════════════════════
+
+class CreatePaperTradeRequest(BaseModel):
+    symbol: str
+    action: str = "BUY"
+    entry_price: float
+    stop_loss: float
+    target_price: float
+    quantity: int
+    trade_mode: str = "INTRADAY"
+    confidence_score: float = 0.0
+    risk_level: str = "MEDIUM"
+    trade_reason: str = ""
+    signal_id: Optional[str] = None
+    risk_reward: Optional[str] = None
+
+
+class ClosePaperTradeRequest(BaseModel):
+    exit_price: float
+    exit_reason: str = "MANUAL_EXIT"  # TARGET_HIT | STOP_LOSS_HIT | AGENT_SELL_SIGNAL | MANUAL_EXIT
+

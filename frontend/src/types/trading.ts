@@ -67,6 +67,115 @@ export interface PaginatedResponse<T> {
   has_more: boolean;
 }
 
+// ── Agent 1 — Discovery Layer Output ────────────────────────────────────────
+// Answers: "What actually happened, and does it meaningfully matter?"
+// Does NOT contain direction bias, trade preference, or watchlist decisions.
+export interface DiscoveryOutput {
+  event_summary: string;
+  detailed_explanation: string;
+  event_type: "corporate_event" | "macro" | "sector" | "regulatory" | "other";
+  event_strength: "STRONG" | "MODERATE" | "WEAK";
+  freshness: "FRESH" | "SLIGHTLY_OLD" | "OLD" | "REPEATED";
+  directness: "DIRECT" | "INDIRECT" | "NONE";
+  is_material: boolean;
+  impact_analysis: string;
+  key_positive_factors: string[];
+  key_risks: string[];
+  confidence: number;            // 0-100
+  final_verdict: "IMPORTANT_EVENT" | "MODERATE_EVENT" | "MINOR_EVENT" | "NOISE";
+  reasoning_summary: string;
+  _source: string;
+  _model: string;
+}
+
+// ── Agent 2 — Market Open Confirmation Output ────────────────────────────────
+// Answers: "After the actual open, is there still usable edge?"
+export interface ConfirmationOutput {
+  decision: "TRADE" | "NO TRADE";
+  trade_mode: "INTRADAY" | "DELIVERY" | "NONE";
+  direction: "BULLISH" | "BEARISH" | "NEUTRAL" | "MIXED";
+  remaining_impact: "HIGH" | "MEDIUM" | "LOW" | "NONE";
+  priced_in_status: "NOT PRICED IN" | "PARTIALLY PRICED IN" | "FULLY PRICED IN" | "UNCLEAR";
+  priority: "HIGH" | "MEDIUM" | "LOW";
+  confidence: number;            // 0-100
+  why_tradable_or_not: string;
+  key_confirmations: string[];
+  warning_flags: string[];
+  invalid_if: string[];
+  final_summary: string;
+  _source?: string;
+  _model?: string;
+}
+
+// ── Agent 3 — Execution Planner Output ──────────────────────────────────────
+// Answers: "Can this be traded right now, and how safely?"
+export interface ExecutionOutput {
+  action: "BUY" | "SELL" | "WAIT" | "AVOID";
+  execution_decision:
+    | "ENTER NOW"
+    | "WAIT FOR BREAKOUT"
+    | "WAIT FOR PULLBACK"
+    | "AVOID CHASE"
+    | "NO TRADE";
+  trade_mode: "INTRADAY" | "DELIVERY" | "NONE";
+  confidence: number;
+  entry_plan: {
+    entry_type: "MARKET" | "BREAKOUT" | "PULLBACK" | "NONE";
+    entry_price: number;
+    condition: string;
+  };
+  stop_loss: {
+    price: number;
+    reason: string;
+  };
+  target: {
+    price: number;
+    reason: string;
+  };
+  position_sizing: {
+    position_size_shares: number;
+    position_size_inr: number;
+    risk_per_share: number;
+    max_loss_at_sl: number;
+    capital_used_pct: number;
+    sizing_note: string;
+  };
+  risk_reward: string;
+  invalidation: string;
+  why_now_or_why_wait: string;
+  final_summary: string;
+  _source?: string;
+  _model?: string;
+}
+
+// ── Trade Signal (DB record) ─────────────────────────────────────────────────
+export interface TradeSignal {
+  id: string;
+  symbol: string;
+  signal_type: string;          // WATCH | NO_TRADE | BUY | SELL
+  trade_mode: string;           // NONE (Agent 1) | INTRADAY | DELIVERY (Agent 2+)
+  entry_price: number | null;
+  stop_loss: number | null;
+  target_price: number | null;
+  risk_reward: number | null;
+  confidence: number;
+  reasoning: DiscoveryOutput | null;         // Agent 1 Discovery output
+  news_article_ids: string[];
+  stock_snapshot: Record<string, unknown> | null;
+  generated_at: number;
+  market_date: string;
+  status: string;
+  // Agent 2
+  confirmation_status: string;
+  confirmed_at: number | null;
+  confirmation_data: ConfirmationOutput | null;
+  // Agent 3
+  execution_status: string;
+  executed_at: number | null;
+  execution_data: ExecutionOutput | null;
+}
+
+// ── Utility Types ─────────────────────────────────────────────────────────────
 export type SystemMode = "PRE-MARKET" | "LIVE" | "BATCH";
 export type EndpointStatus = "LIVE_ENDPOINT" | "OFFLINE";
 export type ProcessingStatus =
@@ -84,7 +193,6 @@ export function getImpactLevel(score: number): ImpactLevel {
 }
 
 export function msToDate(ts: number): Date {
-  // Backend timestamps are in milliseconds
   return new Date(ts);
 }
 
@@ -97,3 +205,92 @@ export function formatTimestamp(ts: number): string {
     second: "2-digit",
   });
 }
+
+// ── Paper Trading Types ──────────────────────────────────────────────────────
+
+export interface PaperTrade {
+  id: string;
+  symbol: string;
+  action: "BUY" | "SELL";
+  entry_price: number;
+  exit_price: number | null;
+  quantity: number;
+  stop_loss: number;
+  target_price: number;
+  current_price: number | null;
+  pnl: number;
+  pnl_percentage: number;
+  status: "OPEN" | "CLOSED" | "CANCELLED";
+  confidence_score: number;
+  risk_level: string;
+  trade_reason: string;
+  exit_reason: string | null;
+  signal_id: string | null;
+  trade_mode: string;
+  risk_reward: string | null;
+  position_value: number;
+  max_loss_at_sl: number;
+  entry_time: number;
+  exit_time: number | null;
+  duration_ms: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+export interface Portfolio {
+  total_capital: number;
+  available_cash: number;
+  used_cash: number;
+  total_profit: number;
+  total_loss: number;
+  total_pnl: number;
+  todays_pnl: number;
+  win_rate: number;
+  total_trades: number;
+  open_trades: number;
+  closed_trades: number;
+  winning_trades: number;
+  losing_trades: number;
+  updated_at: number | null;
+}
+
+export interface MarketSentiment {
+  id: number;
+  symbol: string;
+  sector: string | null;
+  sentiment: string | null;
+  confidence_score: number;
+  news_reason: string | null;
+  event_strength: string | null;
+  final_verdict: string | null;
+  market_date: string | null;
+  updated_at: number | null;
+}
+
+export interface AgentLog {
+  id: number;
+  agent_name: string;
+  symbol: string | null;
+  signal: string | null;
+  confidence: number;
+  message: string | null;
+  details: Record<string, unknown> | null;
+  trade_id: string | null;
+  created_at: number;
+}
+
+export interface PaperTradingDashboard {
+  portfolio: Portfolio;
+  open_positions: PaperTrade[];
+  recent_closed: PaperTrade[];
+  recent_activity: AgentLog[];
+}
+
+export interface AnalyticsData {
+  portfolio_growth: { date: string; cumulative_pnl: number; trade_pnl: number; symbol: string }[];
+  daily_pnl: { date: string; pnl: number }[];
+  win_loss: { wins: number; losses: number; total: number };
+  exit_reasons: Record<string, number>;
+  symbol_performance: { symbol: string; pnl: number; trades: number; wins: number }[];
+}
+

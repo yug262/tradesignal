@@ -182,7 +182,7 @@ function MarketOpenPage() {
 
       <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 mb-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          <strong>How it works:</strong> Agent 2 validates pre-market watchlist signals against the actual opening session (9:15-9:20 AM). It evaluates gap direction, opening move quality, and price discovery to determine if the edge is <strong className="text-emerald-400">CONFIRMED (TRADE)</strong> or <strong className="text-red-400">INVALIDATED (NO TRADE)</strong>.
+          <strong>How it works:</strong> Agent 2 validates the Discovery thesis against the actual opening session (9:15–9:20 AM). It evaluates gap direction, opening move quality, and price discovery to determine if the edge is <strong className="text-emerald-400">CONFIRMED (TRADE)</strong> or <strong className="text-red-400">INVALIDATED (NO TRADE)</strong>. Direction (BULLISH / BEARISH) is set by Agent 2 — not by Agent 1.
         </p>
       </div>
 
@@ -283,12 +283,14 @@ function MarketOpenPage() {
                     {/* Left: Symbol + Direction + Status */}
                     <div className="flex items-center gap-3">
                        <div className="flex items-center justify-center w-8 h-8 rounded border border-border bg-secondary">
-                         {directionIcon(reasoning.direction_bias)}
+                         {/* Direction comes from Agent 2 output, not Agent 1 Discovery */}
+                         {directionIcon(cData?.direction)}
                        </div>
                       <div>
                         <h3 className="font-bold text-sm text-foreground tracking-tight">{sig.symbol}</h3>
-                        <div className={cn("font-mono text-[9px] uppercase tracking-widest font-bold", directionColor(reasoning.direction_bias))}>
-                          {reasoning.direction_bias || "NEUTRAL"} · {sig.trade_mode || "NONE"}
+                        <div className={cn("font-mono text-[9px] uppercase tracking-widest font-bold", directionColor(cData?.direction))}>
+                          {hasConfirmation ? (cData.direction || "NEUTRAL") : "AWAITING OPEN"}
+                          {sig.trade_mode && sig.trade_mode !== "NONE" ? ` · ${sig.trade_mode}` : ""}
                         </div>
                       </div>
                       <div className="ml-2 border-l border-border/50 pl-4">
@@ -481,12 +483,25 @@ function MarketOpenPage() {
                       </div>
                     )}
 
-                    {/* Agent 1 Context (collapsed reference) */}
-                    {reasoning.final_summary && (
+                    {/* Agent 1 Discovery context — uses new Discovery schema fields */}
+                    {(reasoning.reasoning_summary || reasoning.event_summary) && (
                       <div className="pt-2 border-t border-border/30">
                         <div className="bg-background/50 rounded p-3 border border-border/50">
-                          <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest mb-1 font-semibold">Agent 1 Pre-Market View</div>
-                          <p className="text-[11px] text-muted-foreground leading-relaxed">{reasoning.final_summary}</p>
+                          <div className="flex items-center gap-2 mb-1">
+                            <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Agent 1 Discovery</div>
+                            {reasoning.final_verdict && (
+                              <span className={cn(
+                                "font-mono text-[8px] uppercase tracking-widest font-bold",
+                                reasoning.final_verdict === "IMPORTANT_EVENT" ? "text-emerald-400" :
+                                reasoning.final_verdict === "MODERATE_EVENT" ? "text-amber-400" : "text-zinc-500"
+                              )}>
+                                · {reasoning.final_verdict?.replace("_", " ")}
+                              </span>
+                            )}
+                          </div>
+                          <p className="text-[11px] text-muted-foreground leading-relaxed">
+                            {reasoning.reasoning_summary || reasoning.event_summary}
+                          </p>
                         </div>
                       </div>
                     )}

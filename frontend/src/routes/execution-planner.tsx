@@ -34,6 +34,7 @@ function ExecutionPlannerPage() {
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [runningExec, setRunningExec] = useState(false);
+  const [runningRisk, setRunningRisk] = useState(false);
   const [execFilter, setExecFilter] = useState<string>("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -66,6 +67,18 @@ function ExecutionPlannerPage() {
       console.error("Agent execution run failed", err);
     } finally {
       setRunningExec(false);
+    }
+  };
+
+  const triggerRiskMonitor = async () => {
+    setRunningRisk(true);
+    try {
+      await api.triggerRiskMonitor();
+      await loadSignals();
+    } catch (err) {
+      console.error("Risk monitor run failed", err);
+    } finally {
+      setRunningRisk(false);
     }
   };
 
@@ -117,6 +130,23 @@ function ExecutionPlannerPage() {
     return <Badge variant="outline" className="font-mono text-[9px] border-zinc-500/30 text-zinc-400 bg-zinc-500/5">{d || "—"}</Badge>;
   };
 
+  const riskMonitorBadge = (status: string) => {
+    const s = (status || "").toUpperCase();
+    if (s === "HOLD") return <Badge variant="outline" className="font-mono text-[9px] border-emerald-500/30 text-emerald-400 bg-emerald-500/5"><ShieldAlert size={9} className="mr-1" />HOLD</Badge>;
+    if (s === "HOLD_WITH_CAUTION") return <Badge variant="outline" className="font-mono text-[9px] border-amber-500/30 text-amber-400 bg-amber-500/5"><ShieldAlert size={9} className="mr-1" />CAUTION</Badge>;
+    if (s === "TIGHTEN_STOPLOSS") return <Badge variant="outline" className="font-mono text-[9px] border-orange-500/30 text-orange-400 bg-orange-500/5"><ShieldAlert size={9} className="mr-1" />TIGHTEN SL</Badge>;
+    if (s === "PARTIAL_EXIT") return <Badge variant="outline" className="font-mono text-[9px] border-rose-500/30 text-rose-400 bg-rose-500/5"><ShieldAlert size={9} className="mr-1" />PARTIAL EXIT</Badge>;
+    if (s === "EXIT_NOW") return <Badge variant="outline" className="font-mono text-[9px] border-red-600/40 text-red-500 bg-red-600/10 animate-pulse"><ShieldAlert size={9} className="mr-1" />EXIT NOW</Badge>;
+    return null;
+  };
+
+  const riskScoreColor = (score: number) => {
+    if (score >= 70) return "text-red-400";
+    if (score >= 50) return "text-orange-400";
+    if (score >= 30) return "text-amber-400";
+    return "text-emerald-400";
+  };
+
   return (
     <div className="p-5 space-y-5" data-ocid="execution-planner.page">
       {/* Header Bar */}
@@ -146,6 +176,18 @@ function ExecutionPlannerPage() {
           >
             <RefreshCw size={10} className={`mr-1 ${loading ? "animate-spin" : ""}`} />
             Refresh
+          </Button>
+          <Button
+            size="sm"
+            onClick={triggerRiskMonitor}
+            disabled={runningRisk}
+            className="font-mono text-[10px] h-6 bg-rose-600 text-white hover:bg-rose-700 shadow-[0_0_15px_rgba(225,29,72,0.3)]"
+          >
+            {runningRisk ? (
+              <><RefreshCw size={10} className="mr-1 animate-spin" /> Monitoring...</>
+            ) : (
+              <><ShieldAlert size={10} className="mr-1" /> Run Risk Monitor</>
+            )}
           </Button>
           <Button
             size="sm"
@@ -272,8 +314,9 @@ function ExecutionPlannerPage() {
                            <span className={cn(direction === "BULLISH" ? "text-emerald-400" : direction === "BEARISH" ? "text-red-400" : "")}>{direction}</span> Edge Confirmed
                         </div>
                       </div>
-                      <div className="ml-2 border-l border-border/50 pl-4">
+                      <div className="ml-2 border-l border-border/50 pl-4 flex items-center gap-2">
                         {executionBadge(sig.execution_status)}
+                        {sig.risk_monitor_status && riskMonitorBadge(sig.risk_monitor_status)}
                       </div>
                     </div>
 
@@ -448,6 +491,97 @@ function ExecutionPlannerPage() {
                           <span>Source: <span className="text-foreground">{eData._source || "unknown"}</span></span>
                           {eData._model && <span>Model: <span className="text-foreground">{eData._model}</span></span>}
                         </div>
+
+                        {/* Risk Monitor Panel */}
+                        {sig.risk_monitor_status && sig.risk_monitor_data && (() => {
+                          const rm = sig.risk_monitor_data;
+                          const reasoning = rm.detailed_reasoning || {};
+                          const riskBorderColor = (rm.risk_score || 0) >= 70 ? "border-red-500/30" : (rm.risk_score || 0) >= 40 ? "border-orange-500/30" : "border-emerald-500/30";
+                          const riskBgColor = (rm.risk_score || 0) >= 70 ? "bg-red-500/5" : (rm.risk_score || 0) >= 40 ? "bg-orange-500/5" : "bg-emerald-500/5";
+                          return (
+                            <div className={cn("rounded-lg p-4 border mt-3", riskBorderColor, riskBgColor)}>
+                              <div className="flex items-center gap-2 mb-3">
+                                <ShieldAlert size={13} className={riskScoreColor(rm.risk_score || 0)} />
+                                <span className="font-mono text-[10px] uppercase tracking-widest font-semibold" style={{ color: 'inherit' }}>
+                                  Agent 4: Risk Monitor
+                                </span>
+                                {riskMonitorBadge(sig.risk_monitor_status)}
+                              </div>
+
+                              {/* Top-level metrics */}
+                              <div className="grid grid-cols-2 md:grid-cols-5 gap-2 mb-3">
+                                <div className="bg-background/50 rounded p-2 border border-border/30">
+                                  <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Decision</div>
+                                  <div className={cn("font-mono text-xs font-bold", riskScoreColor(rm.risk_score || 0))}>{rm.decision}</div>
+                                </div>
+                                <div className="bg-background/50 rounded p-2 border border-border/30">
+                                  <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Risk Score</div>
+                                  <div className={cn("font-mono text-xs font-bold tabular-nums", riskScoreColor(rm.risk_score || 0))}>{rm.risk_score}/100</div>
+                                </div>
+                                <div className="bg-background/50 rounded p-2 border border-border/30">
+                                  <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Confidence</div>
+                                  <div className={cn("font-mono text-xs font-bold tabular-nums", confidenceColor(rm.confidence || 0))}>{rm.confidence}%</div>
+                                </div>
+                                <div className="bg-background/50 rounded p-2 border border-border/30">
+                                  <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Thesis</div>
+                                  <div className="font-mono text-xs font-bold text-foreground capitalize">{rm.thesis_status}</div>
+                                </div>
+                                <div className="bg-background/50 rounded p-2 border border-border/30">
+                                  <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Urgency</div>
+                                  <div className={cn("font-mono text-xs font-bold capitalize",
+                                    rm.exit_urgency === "critical" ? "text-red-400" :
+                                    rm.exit_urgency === "high" ? "text-orange-400" :
+                                    rm.exit_urgency === "medium" ? "text-amber-400" : "text-emerald-400"
+                                  )}>{rm.exit_urgency}</div>
+                                </div>
+                              </div>
+
+                              {/* Primary Reason */}
+                              {rm.primary_reason && (
+                                <p className="text-[11px] text-foreground leading-relaxed mb-2">{rm.primary_reason}</p>
+                              )}
+
+                              {/* Triggered Risks */}
+                              {rm.triggered_risks && rm.triggered_risks.length > 0 && (
+                                <div className="flex flex-wrap gap-1 mb-2">
+                                  {rm.triggered_risks.map((r: string, i: number) => (
+                                    <Badge key={i} variant="outline" className="font-mono text-[8px] border-red-500/20 text-red-300 bg-red-500/5">{r.replace(/_/g, ' ')}</Badge>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Detailed Reasoning Grid */}
+                              {Object.keys(reasoning).length > 0 && (
+                                <div className="grid grid-cols-3 md:grid-cols-4 gap-1 mt-2">
+                                  {Object.entries(reasoning).map(([key, val]) => (
+                                    <div key={key} className="bg-background/30 rounded px-2 py-1 border border-border/20">
+                                      <div className="font-mono text-[7px] text-muted-foreground uppercase truncate">{key.replace(/_/g, ' ')}</div>
+                                      <div className="font-mono text-[9px] text-foreground truncate">{String(val)}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+
+                              {/* Execution Note */}
+                              {rm.execution_note && (
+                                <p className="font-mono text-[9px] text-muted-foreground mt-2 italic">{rm.execution_note}</p>
+                              )}
+
+                              {/* Updated SL */}
+                              {rm.updated_stop_loss && (
+                                <div className="mt-2 bg-orange-500/10 border border-orange-500/20 rounded px-3 py-1.5">
+                                  <span className="font-mono text-[9px] text-orange-400 font-semibold">SUGGESTED NEW SL: ₹{rm.updated_stop_loss}</span>
+                                </div>
+                              )}
+
+                              {/* Meta */}
+                              <div className="flex items-center gap-4 mt-2 text-[8px] font-mono text-muted-foreground opacity-50">
+                                <span>Source: {rm._source || "unknown"}</span>
+                                {sig.risk_last_checked_at && <span>Last check: {new Date(sig.risk_last_checked_at).toLocaleTimeString()}</span>}
+                              </div>
+                            </div>
+                          );
+                        })()}
                       </div>
                     ) : (
                       <div className="bg-background/50 rounded p-4 border border-border/50 text-center">
