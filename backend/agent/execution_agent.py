@@ -89,31 +89,13 @@ def run_execution_planner(db: Session = None) -> dict:
         symbols = list(set(s.symbol for s in pending_signals))
         live_data_map = fetch_stock_data_for_symbols(symbols)
 
-        # -- Step 4: Process each signal --
+        # -- Step 4: Run Execution Planner (CONCURRENT) ---------------------
+        print(f"\n[STEP 4] Running Gemini Execution Planner ({len(pending_signals)} signals, concurrent)...")
         results = []
         summary = {"planned": 0, "avoided": 0, "skipped": 0}
 
-        for sig in pending_signals:
-            live_data = live_data_map.get(sig.symbol)
-            if not live_data:
-                sig.execution_status = "skipped"
-                sig.executed_at = _now_ms()
-                sig.execution_data = {
-                    "action": "AVOID",
-                    "execution_decision": "NO TRADE",
-                    "why_now_or_why_wait": "No live data available — cannot plan execution.",
-                    "_source": "no_data_skip"
-                }
-                summary["skipped"] += 1
-                continue
-
-        # -- Step 3: Run Execution Planner (CONCURRENT) ---------------------
-        print(f"\n[STEP 3] Running Gemini Execution Planner ({len(confirmed_signals)} signals, concurrent)...")
-        results = []
-        summary = {"planned": 0, "avoided": 0}
-
         tasks = []
-        for sig in confirmed_signals:
+        for sig in pending_signals:
             live_data = live_data_map.get(sig.symbol)
             if not live_data:
                 print(f"      [SKIP] {sig.symbol}: No live data — isolated fetch failure")

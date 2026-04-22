@@ -194,8 +194,12 @@ def run_full_analysis(db: Session = None) -> dict:
                 existing.news_article_ids = [a["id"] for a in articles]
                 existing.stock_snapshot = stock_data_map.get(sym)
                 existing.generated_at = _now_ms()
-                if existing.status == "invalidated":
-                    existing.status = "pending_confirmation"
+                # Reset pipeline statuses for new analysis
+                existing.status = "pending_confirmation"
+                existing.confirmation_status = "pending"
+                existing.execution_status = "pending"
+                existing.confirmed_at = None
+                existing.executed_at = None
                 print(f"      [DB] Updated existing signal for {sym}")
             else:
                 db_signal = db_models.DBTradeSignal(
@@ -230,8 +234,8 @@ def run_full_analysis(db: Session = None) -> dict:
         print(f"   Duration: {duration}ms")
         print(f"{'='*60}\n")
 
-        # Sort by confidence descending (integer 0-100)
-        signals.sort(key=lambda s: s.get("confidence", 0), reverse=True)
+        # Sort: WATCH signals first, then by confidence descending
+        signals.sort(key=lambda s: (0 if s.get("signal_type") == "WATCH" else 1, -s.get("confidence", 0)))
 
         return {
             "run_id": run_id,
