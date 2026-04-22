@@ -133,16 +133,17 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                 "duration_ms": _now_ms() - started_at,
             }
 
-        # -- Step 3: Process each signal ------------------------------------
+        # -- Step 3: Process each signal (CONCURRENT) -----------------------
+        print(f"\n[STEP 3] Running Gemini Confirmation analysis ({len(tradable_signals)} signals, concurrent)...")
         results = []
         summary = {"confirmed": 0, "revised": 0, "invalidated": 0, "skipped": 0}
 
+        # Pre-build inputs for all signals to avoid passing DB objects to threads
+        tasks = []
         for sig in tradable_signals:
             live_data = live_data_map.get(sig.symbol)
             if not live_data:
-                # Partial failure: some symbols fetched but this one didn't.
-                # Invalidate only this signal (isolated miss, not a network outage).
-                print(f"      [SKIP] {sig.symbol}: No live data — isolated fetch failure")
+                # Isolated fetch failure
                 sig.confirmation_status = "invalidated"
                 sig.confirmed_at = _now_ms()
                 sig.status = "invalidated"
@@ -152,49 +153,31 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                     "_source": "no_data_skip",
                 }
                 summary["skipped"] += 1
+                print(f"      [SKIP] {sig.symbol}: No live data — isolated fetch failure")
                 continue
 
-            print(f"\n   -- Analyzing {sig.symbol} --")
-
-            # 1. Fetch News Bundle from DB
+            # Fetch News Bundle
             article_ids = sig.news_article_ids if isinstance(sig.news_article_ids, list) else []
-            articles = db.query(db_models.NewsArticle).filter(
-                db_models.NewsArticle.id.in_(article_ids)
-            ).all()
-
+            articles = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.id.in_(article_ids)).all()
             news_bundle = []
             for a in articles:
                 news_bundle.append({
                     "title": a.title,
                     "description": a.description or a.executive_summary or "",
-                    "published_at": (
-                        datetime.fromtimestamp(a.published_at / 1000, IST).isoformat()
-                        if a.published_at else ""
-                    ),
+                    "published_at": datetime.fromtimestamp(a.published_at / 1000, IST).isoformat() if a.published_at else "",
                 })
 
-            # 2. Bundle Meta
             times = [a.published_at for a in articles if a.published_at]
             distinct_event_count = len(set(a.impact_summary for a in articles if a.impact_summary))
-            has_multiple_catalysts = distinct_event_count > 1
             bundle_meta = {
                 "article_count": len(articles),
                 "distinct_event_count": distinct_event_count,
-                "has_multiple_catalysts": has_multiple_catalysts,
-                "latest_article_time": (
-                    datetime.fromtimestamp(max(times) / 1000, IST).isoformat() if times else ""
-                ),
-                "earliest_article_time": (
-                    datetime.fromtimestamp(min(times) / 1000, IST).isoformat() if times else ""
-                ),
+                "has_multiple_catalysts": distinct_event_count > 1,
+                "latest_article_time": datetime.fromtimestamp(max(times) / 1000, IST).isoformat() if times else "",
+                "earliest_article_time": datetime.fromtimestamp(min(times) / 1000, IST).isoformat() if times else "",
             }
 
-            # 3. Discovery output — use the full Agent 1 reasoning as-is
-            #    This is now the new Discovery schema. We pass it under the key
-            #    "discovery" so Agent 2 knows exactly what it is reading.
             discovery_output = sig.reasoning if isinstance(sig.reasoning, dict) else {}
-
-            # 4. Live Market Context
             snapshot = sig.stock_snapshot if isinstance(sig.stock_snapshot, dict) else {}
             prev_close = snapshot.get("last_close") or live_data.get("last_close") or 0
             open_price = live_data.get("today_open", 0)
@@ -202,23 +185,13 @@ def run_market_open_confirmation(db: Session = None) -> dict:
             change_pct = round(live_data.get("current_change_pct") or 0, 2)
             ltp = live_data.get("ltp", open_price)
 
-            # Opening move quality — mutually exclusive, priority ordered
             move_quality = "WEAK"
             if open_price and prev_close:
-                # P1: REVERSING — price crossed back through open against gap
-                if gap_pct > 0.3 and ltp < open_price * 0.995:
-                    move_quality = "REVERSING"
-                elif gap_pct < -0.3 and ltp > open_price * 1.005:
-                    move_quality = "REVERSING"
-                # P2: FADING — retracing toward previous close
-                elif (gap_pct > 0.5 and change_pct < -0.3) or (gap_pct < -0.5 and change_pct > 0.3):
-                    move_quality = "FADING"
-                # P3: STRONG — continuing in gap direction
-                elif (gap_pct > 0 and change_pct > 0.2) or (gap_pct < 0 and change_pct < -0.2):
-                    move_quality = "STRONG"
-                # P4: HOLDING — gap held, minimal drift
-                elif abs(change_pct) <= 0.5:
-                    move_quality = "HOLDING"
+                if gap_pct > 0.3 and ltp < open_price * 0.995: move_quality = "REVERSING"
+                elif gap_pct < -0.3 and ltp > open_price * 1.005: move_quality = "REVERSING"
+                elif (gap_pct > 0.5 and change_pct < -0.3) or (gap_pct < -0.5 and change_pct > 0.3): move_quality = "FADING"
+                elif (gap_pct > 0 and change_pct > 0.2) or (gap_pct < 0 and change_pct < -0.2): move_quality = "STRONG"
+                elif abs(change_pct) <= 0.5: move_quality = "HOLDING"
 
             live_market_context = {
                 "previous_close": prev_close,
@@ -232,44 +205,64 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                 "opening_move_quality": move_quality,
             }
 
-            # Lightweight relative volume context (if baseline available)
             avg_vol_20d = snapshot.get("avg_volume_20d")
             current_vol = live_data.get("current_volume", 0)
             if avg_vol_20d and avg_vol_20d > 0 and current_vol:
                 live_market_context["volume_vs_avg_20d"] = round(current_vol / avg_vol_20d, 2)
 
-            # Normalized price move from previous close
             if prev_close and ltp:
                 live_market_context["price_move_percent"] = round((ltp - prev_close) / prev_close * 100, 2)
 
-            # 5. Build Agent 2 Input — uses new Discovery schema under "discovery" key
             agent2_input = {
                 "symbol": sig.symbol,
                 "company_name": sig.symbol,
                 "news_bundle": news_bundle,
                 "bundle_meta": bundle_meta,
-                "discovery": discovery_output,          # NEW: full Discovery output
+                "discovery": discovery_output,
                 "live_market_context": live_market_context,
             }
+            tasks.append((sig, agent2_input, discovery_output))
 
-            # 6. Call Agent 2 (Gemini Confirmer)
-            print(f"      [GEMINI] Agent 2 confirming {sig.symbol}...")
-            confirmation = confirm_signal_v2(agent2_input, market_date)
+        db.commit() # Save any skipped signals early
+
+        # Run Gemini calls concurrently
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def _confirm_one(symbol, inp):
+            print(f"      [GEMINI] Agent 2 confirming {symbol}...")
+            try:
+                res = confirm_signal_v2(inp, market_date)
+                print(f"      [OK] {symbol}: {res.get('decision', 'NO TRADE')} (conf={res.get('confidence')})")
+                return symbol, res
+            except Exception as e:
+                print(f"      [ERROR] {symbol}: {e}")
+                return symbol, None
+
+        results_map = {}
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {pool.submit(_confirm_one, t[0].symbol, t[1]): t[0].symbol for t in tasks}
+            for future in as_completed(futures):
+                sym = futures[future]
+                try:
+                    s, result = future.result()
+                    if result is not None:
+                        results_map[s] = result
+                except Exception as e:
+                    print(f"   [ERROR] Thread for {sym} failed: {e}")
+
+        # Write results to DB sequentially
+        for sig, _, discovery_output in tasks:
+            confirmation = results_map.get(sig.symbol)
+            if not confirmation:
+                continue
 
             decision = confirmation.get("decision", "NO TRADE").upper()
-            print(f"      [RESULT] {decision} | Confidence: {confirmation.get('confidence')}")
-
-            # Update DB
             is_trade = (decision == "TRADE")
+            
             sig.confirmation_status = "confirmed" if is_trade else "invalidated"
             sig.confirmed_at = _now_ms()
             sig.confirmation_data = confirmation
             sig.status = "confirmed" if is_trade else "invalidated"
-
-            # Update trade_mode from Agent 2 decision
             sig.trade_mode = confirmation.get("trade_mode", "NONE")
-
-            # Update confidence with Agent 2's output
             sig.confidence = confirmation.get("confidence", discovery_output.get("confidence", 0))
 
             summary["confirmed" if is_trade else "invalidated"] += 1
@@ -279,8 +272,6 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                 "confidence": sig.confidence,
                 "why": confirmation.get("why_tradable_or_not", ""),
             })
-
-            # Commit after each signal to minimize lock contention and avoid deadlocks
             db.commit()
         duration = _now_ms() - started_at
 
