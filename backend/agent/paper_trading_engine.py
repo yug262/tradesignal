@@ -35,6 +35,15 @@ def _market_date_str() -> str:
     return datetime.now(IST).strftime("%Y-%m-%d")
 
 
+def _is_market_open() -> bool:
+    """Check if current time is within Indian market hours (09:15 to 15:30) and on a weekday."""
+    now = datetime.now(IST)
+    if now.weekday() > 4:  # 5=Saturday, 6=Sunday
+        return False
+    current_minutes = now.hour * 60 + now.minute
+    return (9 * 60 + 15) <= current_minutes < (15 * 60 + 30)
+
+
 def _log_action(db: Session, agent_name: str, symbol: str, signal: str,
                 message: str, confidence: float = 0.0, trade_id: str = None,
                 details: dict = None):
@@ -170,6 +179,12 @@ def create_paper_trade(
     max_loss_at_sl: float = 0.0,
 ) -> dict:
     """Create a new paper trade and update portfolio."""
+
+    if not _is_market_open():
+        return {
+            "success": False,
+            "error": "Market is closed. Trading is only allowed on weekdays between 09:15 and 15:30 IST."
+        }
 
     portfolio = get_or_create_portfolio(db)
     position_value = round(quantity * entry_price, 2)
