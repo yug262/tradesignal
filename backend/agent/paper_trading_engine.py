@@ -404,8 +404,17 @@ def monitor_open_positions(db: Session = None) -> dict:
 
                 # Check exit conditions
                 exit_reason = None
+                
+                # Auto square-off INTRADAY trades at or after 15:20 (3:20 PM)
+                ist_now = datetime.now(IST)
+                is_intraday_cutoff = (
+                    trade.trade_mode == "INTRADAY" 
+                    and (ist_now.hour > 15 or (ist_now.hour == 15 and ist_now.minute >= 20))
+                )
 
-                if trade.action == "BUY":
+                if is_intraday_cutoff:
+                    exit_reason = "TIME_SQUARE_OFF"
+                elif trade.action == "BUY":
                     if live_price >= trade.target_price:
                         exit_reason = "TARGET_HIT"
                     elif live_price <= trade.stop_loss:

@@ -13,10 +13,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL")
 
 _client = None
-if GEMINI_API_KEY and GEMINI_API_KEY != "your_gemini_api_key_here":
+if GEMINI_API_KEY and GEMINI_API_KEY != "":
     _client = genai.Client(api_key=GEMINI_API_KEY)
 
 

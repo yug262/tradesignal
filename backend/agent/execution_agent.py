@@ -107,12 +107,24 @@ def run_execution_planner(db: Session = None) -> dict:
                 summary["skipped"] += 1
                 continue
 
-            print(f"\n   -- Planning Execution for {sig.symbol} --")
+        # -- Step 3: Run Execution Planner (CONCURRENT) ---------------------
+        print(f"\n[STEP 3] Running Gemini Execution Planner ({len(confirmed_signals)} signals, concurrent)...")
+        results = []
+        summary = {"planned": 0, "avoided": 0}
 
-            # 1. Agent 2 View
+        tasks = []
+        for sig in confirmed_signals:
+            live_data = live_data_map.get(sig.symbol)
+            if not live_data:
+                print(f"      [SKIP] {sig.symbol}: No live data — isolated fetch failure")
+                sig.execution_status = "skipped"
+                sig.status = "invalidated"
+                sig.executed_at = _now_ms()
+                sig.execution_data = {"error": "live_data_missing"}
+                summary["avoided"] += 1
+                continue
+
             agent2_view = sig.confirmation_data if isinstance(sig.confirmation_data, dict) else {}
-            
-            # Map confirmation data to Agent 2 expected input structure
             agent2_input_view = {
                 "decision": agent2_view.get("decision", "TRADE"),
                 "trade_mode": agent2_view.get("trade_mode", sig.trade_mode),
@@ -128,7 +140,6 @@ def run_execution_planner(db: Session = None) -> dict:
                 "final_summary": agent2_view.get("final_summary", "")
             }
 
-            # 2. Live Execution Context
             snapshot = sig.stock_snapshot if isinstance(sig.stock_snapshot, dict) else {}
             prev_close = snapshot.get("last_close") or live_data.get("last_close") or 0
             open_price = live_data.get("today_open", 0)
@@ -141,42 +152,27 @@ def run_execution_planner(db: Session = None) -> dict:
             gap_pct = round(((open_price - prev_close) / prev_close * 100), 2) if prev_close else 0
             change_pct = round(live_data.get("current_change_pct") or 0, 2)
             
-            # Distance calculations
             dist_from_vwap_pct = round(((ltp - vwap) / vwap * 100), 2) if vwap else 0
             dist_from_high_pct = round(((high_price - ltp) / ltp * 100), 2) if high_price and ltp else 0
             dist_from_low_pct = round(((ltp - low_price) / low_price * 100), 2) if low_price and ltp else 0
             price_move_pct = round(((ltp - prev_close) / prev_close * 100), 2) if prev_close else 0
 
-            # Move Quality
             move_quality = "WEAK"
             if open_price and prev_close:
-                if gap_pct > 0.3 and ltp < open_price * 0.995:
-                    move_quality = "REVERSING"
-                elif gap_pct < -0.3 and ltp > open_price * 1.005:
-                    move_quality = "REVERSING"
-                elif (gap_pct > 0.5 and change_pct < -0.3) or (gap_pct < -0.5 and change_pct > 0.3):
-                    move_quality = "FADING"
-                elif (gap_pct > 0 and change_pct > 0.2) or (gap_pct < 0 and change_pct < -0.2):
-                    move_quality = "STRONG"
-                elif abs(change_pct) <= 0.5:
-                    move_quality = "HOLDING"
+                if gap_pct > 0.3 and ltp < open_price * 0.995: move_quality = "REVERSING"
+                elif gap_pct < -0.3 and ltp > open_price * 1.005: move_quality = "REVERSING"
+                elif (gap_pct > 0.5 and change_pct < -0.3) or (gap_pct < -0.5 and change_pct > 0.3): move_quality = "FADING"
+                elif (gap_pct > 0 and change_pct > 0.2) or (gap_pct < 0 and change_pct < -0.2): move_quality = "STRONG"
+                elif abs(change_pct) <= 0.5: move_quality = "HOLDING"
 
-            # Intraday Structure approximation
             intraday_structure = "UNCLEAR"
-            if ltp >= high_price * 0.998 and change_pct > 0.5:
-                intraday_structure = "BREAKOUT_HIGH"
-            elif ltp <= low_price * 1.002 and change_pct < -0.5:
-                intraday_structure = "BREAKDOWN_LOW"
-            elif move_quality == "STRONG" and abs(change_pct) > 1.0:
-                intraday_structure = "TRENDING"
-            elif move_quality == "FADING":
-                intraday_structure = "PULLBACK"
-            elif move_quality == "REVERSING":
-                intraday_structure = "REVERSAL"
-            elif move_quality == "HOLDING":
-                intraday_structure = "RANGE"
+            if ltp >= high_price * 0.998 and change_pct > 0.5: intraday_structure = "BREAKOUT_HIGH"
+            elif ltp <= low_price * 1.002 and change_pct < -0.5: intraday_structure = "BREAKDOWN_LOW"
+            elif move_quality == "STRONG" and abs(change_pct) > 1.0: intraday_structure = "TRENDING"
+            elif move_quality == "FADING": intraday_structure = "PULLBACK"
+            elif move_quality == "REVERSING": intraday_structure = "REVERSAL"
+            elif move_quality == "HOLDING": intraday_structure = "RANGE"
 
-            # Volume Context
             avg_vol_20d = snapshot.get("avg_volume_20d")
             vol_vs_avg = round(current_vol / avg_vol_20d, 2) if avg_vol_20d and avg_vol_20d > 0 else 0
 
@@ -200,29 +196,57 @@ def run_execution_planner(db: Session = None) -> dict:
                 "distance_from_day_low_percent": dist_from_low_pct
             }
 
-            # 3. Build Agent 3 Input
             agent3_input = {
                 "symbol": sig.symbol,
                 "company_name": sig.symbol,
                 "agent2_view": agent2_input_view,
                 "live_execution_context": live_execution_context
             }
+            tasks.append((sig, agent3_input))
 
-            # 4. Call Agent 3 (Gemini Executor) with risk config
-            print(f"      [GEMINI] Agent 3 planning {sig.symbol}...")
-            execution_plan = plan_execution(agent3_input, risk_config=risk_config)
+        db.commit() # Save any skipped signals
+
+        # Run Gemini calls concurrently
+        from concurrent.futures import ThreadPoolExecutor, as_completed
+        def _execute_one(symbol, inp):
+            print(f"      [GEMINI] Agent 3 planning {symbol}...")
+            try:
+                res = plan_execution(inp, risk_config=risk_config)
+                action = res.get("action", "AVOID").upper()
+                exec_dec = res.get("execution_decision", "NO TRADE").upper()
+                print(f"      [RESULT] {symbol}: {action} | {exec_dec} | Confidence: {res.get('confidence')}")
+                return symbol, res
+            except Exception as e:
+                print(f"      [ERROR] {symbol}: {e}")
+                return symbol, None
+
+        results_map = {}
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            futures = {pool.submit(_execute_one, t[0].symbol, t[1]): t[0].symbol for t in tasks}
+            for future in as_completed(futures):
+                sym = futures[future]
+                try:
+                    s, result = future.result()
+                    if result is not None:
+                        results_map[s] = result
+                except Exception as e:
+                    print(f"   [ERROR] Thread for {sym} failed: {e}")
+
+        # Write results to DB sequentially
+        for sig, _ in tasks:
+            execution_plan = results_map.get(sig.symbol)
+            if not execution_plan:
+                continue
 
             action = execution_plan.get("action", "AVOID").upper()
             exec_dec = execution_plan.get("execution_decision", "NO TRADE").upper()
-            print(f"      [RESULT] {action} | {exec_dec} | Confidence: {execution_plan.get('confidence')}")
 
-            # Update DB
             if exec_dec == "NO TRADE":
                 sig.execution_status = "skipped"
                 sig.status = "invalidated"
             elif exec_dec == "AVOID CHASE":
                 sig.execution_status = "skipped"
-                sig.status = "confirmed"  # Edge is valid, just skipping execution for now
+                sig.status = "confirmed" 
             else:
                 sig.execution_status = "planned"
                 sig.status = "planned"
@@ -230,7 +254,6 @@ def run_execution_planner(db: Session = None) -> dict:
             sig.executed_at = _now_ms()
             sig.execution_data = execution_plan
             
-            # Map top-level columns if planning
             if sig.execution_status == "planned":
                 ep = execution_plan.get("entry_plan", {})
                 sl = execution_plan.get("stop_loss", {})
@@ -241,8 +264,6 @@ def run_execution_planner(db: Session = None) -> dict:
                 sig.entry_price = ep.get("entry_price")
                 sig.stop_loss = sl.get("price")
                 sig.target_price = tg.get("price")
-                # risk_reward stored as string in execution_data; keep DB column null (schema is Float)
-                # Future: parse ratio to float here if needed
                 summary["planned"] += 1
 
                 ps = sizing
@@ -252,7 +273,6 @@ def run_execution_planner(db: Session = None) -> dict:
                 print(f"      [SIZING] {shares} shares @ Rs.{ep.get('entry_price', 0)} "
                       f"= Rs.{pos_inr:,.0f} ({cap_pct}% of capital)")
 
-                # Auto-create paper trade for ENTER NOW decisions
                 from agent.paper_trading_engine import auto_create_from_execution, _log_action
                 pt_result = auto_create_from_execution(db, sig)
                 if pt_result and pt_result.get("success"):
@@ -273,8 +293,6 @@ def run_execution_planner(db: Session = None) -> dict:
                 "confidence": execution_plan.get("confidence", 0),
                 "why": execution_plan.get("why_now_or_why_wait", "")
             })
-            
-            # Commit after each signal to minimize lock contention and avoid deadlocks
             db.commit()
         duration = _now_ms() - started_at
         
