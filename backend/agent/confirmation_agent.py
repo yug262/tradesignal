@@ -97,9 +97,13 @@ def run_market_open_confirmation(db: Session = None) -> dict:
         skip_signals = [s for s in pending_signals if s.signal_type != "WATCH"]
 
         # Auto-skip non-tradable signals
+        results = []
+        summary = {"confirmed": 0, "revised": 0, "invalidated": 0, "skipped": 0}
+        
         for sig in skip_signals:
             sig.confirmation_status = "invalidated"
             sig.confirmed_at = _now_ms()
+            sig.status = "invalidated"
             sig.confirmation_data = {
                 "decision": "NO TRADE",
                 "why_tradable_or_not": (
@@ -107,6 +111,26 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                     f"(signal_type={sig.signal_type})"
                 ),
                 "_source": "auto_skip",
+            }
+            results.append({
+                "symbol": sig.symbol,
+                "decision": "SKIPPED",
+                "confidence": sig.confidence,
+                "why": f"Auto-skipped: Discovery verdict was {sig.signal_type}",
+            })
+            summary["skipped"] += 1
+            db.commit()
+
+        if not tradable_signals:
+            print("\n[INFO] No WATCH signals found to confirm. (Skipped non-important events)")
+            return {
+                "run_id": run_id,
+                "market_date": market_date,
+                "confirmed_at": _now_ms(),
+                "total_checked": len(pending_signals),
+                "summary": summary,
+                "results": results,
+                "duration_ms": _now_ms() - started_at,
             }
 
         # -- Step 2: Fetch LIVE stock data ----------------------------------
@@ -135,8 +159,7 @@ def run_market_open_confirmation(db: Session = None) -> dict:
 
         # -- Step 3: Process each signal (CONCURRENT) -----------------------
         print(f"\n[STEP 3] Running Gemini Confirmation analysis ({len(tradable_signals)} signals, concurrent)...")
-        results = []
-        summary = {"confirmed": 0, "revised": 0, "invalidated": 0, "skipped": 0}
+
 
         # Pre-build inputs for all signals to avoid passing DB objects to threads
         tasks = []
