@@ -1,26 +1,28 @@
-"""Risk Monitor Agent (Agent 4) — Post-entry trade protection engine.
+"""Risk Monitor Agent (Agent 4) — Post-entry live trade protection engine.
 
 This is the main orchestrator for the live risk monitoring system.
-It continuously evaluates every open (planned) trade and produces
-HOLD / HOLD_WITH_CAUTION / TIGHTEN_STOPLOSS / PARTIAL_EXIT / EXIT_NOW decisions.
+It continuously evaluates every open trade and produces
+HOLD / TIGHTEN_STOPLOSS / PARTIAL_EXIT / EXIT_NOW decisions.
+
+NO Gemini/LLM in the execution path.
+NO scoring engine. NO weighted buckets.
+Pure deterministic rule engine.
 
 Pipeline for each monitored trade:
   1. Fetch live quote + intraday candles + market depth
-  2. Extract normalized risk features (risk_features.py)
-  3. Run hard invalidation checks (risk_rules.py)
-  4. If no hard invalidation → compute weighted risk score (risk_rules.py)
-  5. Determine base decision from rule engine (risk_rules.py)
-  6. For borderline cases (risk_score 30-70) → optionally use Gemini (gemini_risk_monitor.py)
-  7. Merge final decision and persist to DB
+  2. Extract minimal risk features (risk_features.py)
+  3. Run strict priority rule engine (risk_rules.py)
+  4. Log decision + persist to DB (updates SL, or closes trade)
 
 Integration points:
-  - Reads from: DBTradeSignal where execution_status='planned'
-  - Writes to: risk_monitor_status, risk_monitor_data, risk_last_checked_at columns
+  - Reads from: DBPaperTrade where status='OPEN'
+  - Writes to: DBTradeSignal (for status visibility) and DBPaperTrade (SL updates)
   - Triggered by: APScheduler interval job (every 30s during market hours)
   - Exposed via: /api/agent/risk-monitor endpoints
 """
 
 import time
+import logging
 import traceback
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
@@ -34,21 +36,15 @@ from agent.risk_features import (
     fetch_intraday_candles,
     fetch_market_depth,
 )
-from agent.risk_rules import (
-    check_hard_invalidations,
-    compute_risk_score,
-    determine_risk_decision,
-)
-from agent.gemini_risk_monitor import evaluate_risk_with_llm
+from agent.risk_rules import evaluate_trade
+from agent.paper_trading_engine import close_paper_trade
+
+logger = logging.getLogger("risk_monitor")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
 # Minimum interval between checks for the same trade (seconds)
 MIN_CHECK_INTERVAL_SECONDS = 25
-
-# Use LLM for borderline risk scores within this range
-LLM_BORDERLINE_LOW = 30
-LLM_BORDERLINE_HIGH = 70
 
 
 def _now_ms() -> int:
@@ -65,11 +61,44 @@ def _market_is_open() -> bool:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# STRUCTURED LOGGING
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _log_decision(trade_id: str, symbol: str, features: dict, result: dict, old_sl: float):
+    """Log every risk decision in a structured format."""
+    new_sl = result.get("updated_stop_loss")
+    decision = result.get("decision", "HOLD")
+    reason_code = result.get("reason_code", "")
+    pnl_pct = features.get("pnl_percent", 0)
+    pnl_rupees_total = features.get("pnl_rupees_total", 0)
+    ltp = features.get("ltp", 0)
+    entry = features.get("entry_price", 0)
+    qty = features.get("quantity", 0)
+    mfe_pct = features.get("mfe_pct", 0)
+    mae_pct = features.get("mae_pct", 0)
+    time_in_trade = features.get("time_in_trade_seconds", 0)
+    triggered = result.get("triggered_rules", [])
+
+    mins = int(time_in_trade // 60)
+    sl_change = f"₹{old_sl:.2f} → ₹{new_sl:.2f}" if new_sl else f"₹{old_sl:.2f} (unch)"
+
+    print(
+        f"  [RISK] {symbol:<10} | {decision:<16} | "
+        f"Reason: {reason_code:<25} | "
+        f"LTP: ₹{ltp:.2f} | Entry: ₹{entry:.2f} | Qty: {qty} | "
+        f"PnL: {pnl_pct:+.1f}% (₹{pnl_rupees_total:+.0f}) | "
+        f"MFE: +{mfe_pct:.1f}% | MAE: {mae_pct:.1f}% | "
+        f"SL: {sl_change} | "
+        f"Time: {mins}m | Rules: {triggered}"
+    )
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN MONITOR LOOP
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
-    """Run the risk monitor for all active (planned) trades.
+    """Run the risk monitor for all truly open trades.
 
     Args:
         db: SQLAlchemy session (creates own if None)
@@ -97,13 +126,13 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
                 "results": [],
             }
 
-        # ── Step 1: Get all active (planned) trades ──────────────────────
-        today = now.strftime("%Y-%m-%d")
+        # ── Step 1: Get all active (open) trades ─────────────────────────
+        # We monitor DBPaperTrade (status == "OPEN") since this represents
+        # actual live positions with real entry prices and quantities.
         active_trades = (
-            db.query(db_models.DBTradeSignal)
-            .filter(db_models.DBTradeSignal.execution_status == "planned")
-            .filter(db_models.DBTradeSignal.market_date == today)
-            .order_by(db_models.DBTradeSignal.symbol) # Sort to prevent deadlocks
+            db.query(db_models.DBPaperTrade)
+            .filter(db_models.DBPaperTrade.status == "OPEN")
+            .order_by(db_models.DBPaperTrade.symbol)
             .all()
         )
 
@@ -120,7 +149,6 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
         results = []
         summary = {
             "hold": 0,
-            "hold_with_caution": 0,
             "tighten_stoploss": 0,
             "partial_exit": 0,
             "exit_now": 0,
@@ -141,38 +169,58 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
                     summary[decision_key] += 1
 
                 results.append({
+                    "trade_id": trade.id,
                     "symbol": trade.symbol,
-                    "signal_id": trade.id,
+                    "signal_id": trade.signal_id,
                     "decision": decision,
+                    "reason_code": result.get("reason_code", ""),
                     "confidence": result.get("confidence", 0),
-                    "risk_score": result.get("risk_score", 0),
-                    "thesis_status": result.get("thesis_status", "unknown"),
-                    "exit_urgency": result.get("exit_urgency", "none"),
                     "primary_reason": result.get("primary_reason", ""),
-                    "triggered_risks": result.get("triggered_risks", []),
-                    "source": result.get("_source", "unknown"),
+                    "updated_stop_loss": result.get("updated_stop_loss"),
+                    "exit_fraction": result.get("exit_fraction", 0.0),
+                    "triggered_rules": result.get("triggered_rules", []),
+                    "pnl_percent": result.get("pnl_percent", 0),
+                    "pnl_rupees_total": result.get("pnl_rupees_total", 0),
                 })
 
                 # ── Persist to DB ────────────────────────────────────────
-                trade.risk_monitor_status = decision
-                trade.risk_monitor_data = result
-                trade.risk_last_checked_at = _now_ms()
-                
-                # Commit after each trade to minimize lock contention and avoid deadlocks
+                trade.updated_at = _now_ms()
+
+                # If SL was tightened, update the trade's stop_loss natively
+                new_sl = result.get("updated_stop_loss")
+                if new_sl is not None and decision == "TIGHTEN_STOPLOSS":
+                    trade.stop_loss = new_sl
+
+                # If EXIT_NOW, close the paper trade immediately
+                if decision == "EXIT_NOW":
+                    ltp = result.get("_features_snapshot", {}).get("ltp") or trade.current_price
+                    close_paper_trade(db, trade.id, ltp, "RISK_MONITOR_EXIT")
+
+                # Also update DBTradeSignal to keep dashboard UI in sync
+                if trade.signal_id:
+                    sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
+                    if sig:
+                        sig.risk_monitor_status = decision
+                        sig.risk_monitor_data = result
+                        sig.risk_last_checked_at = _now_ms()
+                        # Ensure signal's stop_loss stays in sync with the paper trade
+                        if new_sl is not None and decision == "TIGHTEN_STOPLOSS":
+                            sig.stop_loss = new_sl
+
                 db.commit()
 
             except Exception as e:
-                # If a single trade fails, rollback that transaction but continue others
                 db.rollback()
                 print(f"  [ERROR] Risk monitor failed for {trade.symbol}: {e}")
                 traceback.print_exc()
                 summary["errors"] += 1
                 results.append({
                     "symbol": trade.symbol,
-                    "signal_id": trade.id,
+                    "trade_id": trade.id,
                     "decision": "ERROR",
                     "error": str(e),
                 })
+
         duration = _now_ms() - run_started
 
         return {
@@ -202,8 +250,8 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
 # SINGLE TRADE EVALUATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _evaluate_single_trade(trade, db: Session) -> dict | None:
-    """Evaluate risk for a single active trade.
+def _evaluate_single_trade(trade: db_models.DBPaperTrade, db: Session) -> dict | None:
+    """Evaluate risk for a single truly open trade.
 
     Returns:
         Risk monitor output dict, or None if skipped (too soon since last check).
@@ -211,41 +259,49 @@ def _evaluate_single_trade(trade, db: Session) -> dict | None:
     symbol = trade.symbol
 
     # ── Throttle: skip if checked too recently ────────────────────────────
-    last_check = trade.risk_last_checked_at or 0
+    # For paper trades, we use updated_at as proxy for last check, 
+    # but to be safe we'll use DBTradeSignal.risk_last_checked_at if linked
+    last_check = trade.updated_at
+    if trade.signal_id:
+        sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
+        if sig and sig.risk_last_checked_at:
+            last_check = sig.risk_last_checked_at
+
     now_ms = _now_ms()
     elapsed = (now_ms - last_check) / 1000
     if elapsed < MIN_CHECK_INTERVAL_SECONDS:
         return None
 
-    # ── Build signal dict for feature extraction ─────────────────────────
+    # ── Build flattened signal dict for feature extraction ───────────────
     signal_dict = {
         "symbol": symbol,
         "trade_mode": trade.trade_mode,
-        "execution_data": trade.execution_data if isinstance(trade.execution_data, dict) else {},
-        "reasoning": trade.reasoning if isinstance(trade.reasoning, dict) else {},
-        "confirmation_data": trade.confirmation_data if isinstance(trade.confirmation_data, dict) else {},
-        "executed_at": trade.executed_at,
+        "direction": trade.action,
+        "quantity": trade.quantity,
+        "executed_at": trade.entry_time,
         "entry_price": trade.entry_price,
         "stop_loss": trade.stop_loss,
         "target_price": trade.target_price,
+        "id": trade.id,
+        "signal_id": trade.signal_id,
     }
 
     # ── Step 1: Fetch live data ──────────────────────────────────────────
     live_quote = fetch_live_quote(symbol)
     if live_quote.get("error"):
         print(f"    [WARN] {symbol}: Live quote error: {live_quote['error']}")
-        # Don't crash — return a safe HOLD with low confidence
         return {
             "decision": "HOLD",
+            "reason_code": "DATA_UNAVAILABLE",
             "confidence": 30,
-            "risk_score": 0,
-            "thesis_status": "unknown",
-            "exit_urgency": "none",
             "primary_reason": f"Live data unavailable: {live_quote['error']}. Defaulting to HOLD.",
-            "triggered_risks": ["data_unavailable"],
-            "execution_note": "Monitor manually. Live data fetch failed.",
-            "next_review_priority": "high",
-            "_source": "data_error_fallback",
+            "triggered_rules": ["data_unavailable"],
+            "updated_stop_loss": None,
+            "exit_fraction": 0.0,
+            "pnl_percent": 0,
+            "time_in_trade_seconds": 0,
+            "pnl_rupees_total": 0,
+            "_features_snapshot": {},
         }
 
     candles = fetch_intraday_candles(symbol, interval_minutes=5)
@@ -259,99 +315,14 @@ def _evaluate_single_trade(trade, db: Session) -> dict | None:
         depth=depth,
     )
 
-    # ── Step 3: Hard invalidation check ──────────────────────────────────
-    hard_result = check_hard_invalidations(features)
+    # ── Step 3: Run rule engine (strict priority, no scoring) ────────────
+    old_sl = trade.stop_loss or 0
+    result = evaluate_trade(features)
 
-    # ── Step 4: Soft risk scoring ────────────────────────────────────────
-    risk_scoring = compute_risk_score(features)
+    # ── Step 4: Log decision ─────────────────────────────────────────────
+    _log_decision(trade.id, symbol, features, result, old_sl)
 
-    # ── Step 5: Base decision from rule engine ───────────────────────────
-    rule_decision = determine_risk_decision(
-        features=features,
-        risk_scoring=risk_scoring,
-        hard_invalidation=hard_result,
-    )
-
-    # ── Step 6: Optional LLM overlay for borderline cases ────────────────
-    composite = risk_scoring["composite_score"]
-    use_llm = (
-        hard_result is None  # No hard invalidation
-        and LLM_BORDERLINE_LOW <= composite <= LLM_BORDERLINE_HIGH  # Borderline score
-    )
-
-    if use_llm:
-        llm_result = evaluate_risk_with_llm(
-            signal=signal_dict,
-            features=features,
-            rule_engine_result=rule_decision,
-        )
-
-        # Merge: LLM can upgrade or downgrade by at most 1 level
-        final_result = _merge_decisions(rule_decision, llm_result)
-    else:
-        final_result = rule_decision
-
-    return final_result
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# DECISION MERGING
-# ═══════════════════════════════════════════════════════════════════════════════
-
-DECISION_SEVERITY = {
-    "HOLD": 0,
-    "HOLD_WITH_CAUTION": 1,
-    "TIGHTEN_STOPLOSS": 2,
-    "PARTIAL_EXIT": 3,
-    "EXIT_NOW": 4,
-}
-
-
-def _merge_decisions(rule_result: dict, llm_result: dict) -> dict:
-    """Merge rule engine and LLM decisions.
-
-    Rules:
-    - If both agree, use LLM result (better reasoning)
-    - If LLM is more conservative (higher severity), trust LLM
-    - If LLM is more aggressive (lower severity), limit downgrade to 1 level
-    - Always preserve hard invalidation from rule engine
-    """
-    rule_dec = rule_result.get("decision", "HOLD")
-    llm_dec = llm_result.get("decision", "HOLD")
-
-    rule_sev = DECISION_SEVERITY.get(rule_dec, 0)
-    llm_sev = DECISION_SEVERITY.get(llm_dec, 0)
-
-    if rule_sev == llm_sev:
-        # Agreement — use LLM (better reasoning)
-        final = dict(llm_result)
-        final["_merge_strategy"] = "agreement"
-    elif llm_sev > rule_sev:
-        # LLM is more conservative — trust it
-        final = dict(llm_result)
-        final["_merge_strategy"] = "llm_escalated"
-    else:
-        # LLM wants to downgrade — limit to 1 level
-        max_downgrade_sev = max(0, rule_sev - 1)
-        effective_sev = max(max_downgrade_sev, llm_sev)
-
-        # Find the decision name for effective severity
-        sev_to_dec = {v: k for k, v in DECISION_SEVERITY.items()}
-        effective_dec = sev_to_dec.get(effective_sev, rule_dec)
-
-        if effective_sev == llm_sev:
-            final = dict(llm_result)
-            final["decision"] = effective_dec
-        else:
-            final = dict(rule_result)
-            final["decision"] = effective_dec
-
-        final["_merge_strategy"] = "llm_downgrade_limited"
-
-    final["_rule_engine_decision"] = rule_dec
-    final["_llm_decision"] = llm_dec
-    final["_source"] = "merged"
-    return final
+    return result
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -359,7 +330,7 @@ def _merge_decisions(rule_result: dict, llm_result: dict) -> dict:
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def get_risk_monitor_summary(db: Session = None) -> dict:
-    """Get current risk monitor state for all active trades.
+    """Get current risk monitor state for all active (open) trades.
 
     Returns a summary for dashboard/API display without re-running the monitor.
     """
@@ -370,32 +341,46 @@ def get_risk_monitor_summary(db: Session = None) -> dict:
 
     try:
         today = datetime.now(IST).strftime("%Y-%m-%d")
-        active_trades = (
-            db.query(db_models.DBTradeSignal)
-            .filter(db_models.DBTradeSignal.execution_status == "planned")
-            .filter(db_models.DBTradeSignal.market_date == today)
+        
+        # Pull from DBPaperTrade directly since it is the source of truth for open trades
+        open_trades = (
+            db.query(db_models.DBPaperTrade)
+            .filter(db_models.DBPaperTrade.status == "OPEN")
             .all()
         )
 
         trades = []
-        for t in active_trades:
-            rm_data = t.risk_monitor_data if isinstance(t.risk_monitor_data, dict) else {}
+        for t in open_trades:
+            # We also get the DBTradeSignal for the enriched RM data if available
+            rm_data = {}
+            rm_status = "not_checked"
+            last_check = t.updated_at
+            
+            if t.signal_id:
+                sig = db.query(db_models.DBTradeSignal).filter_by(id=t.signal_id).first()
+                if sig:
+                    rm_data = sig.risk_monitor_data if isinstance(sig.risk_monitor_data, dict) else {}
+                    rm_status = sig.risk_monitor_status or "not_checked"
+                    last_check = sig.risk_last_checked_at or t.updated_at
+            
             trades.append({
-                "signal_id": t.id,
+                "trade_id": t.id,
+                "signal_id": t.signal_id,
                 "symbol": t.symbol,
                 "trade_mode": t.trade_mode,
                 "entry_price": t.entry_price,
+                "quantity": t.quantity,
                 "stop_loss": t.stop_loss,
                 "target_price": t.target_price,
-                "risk_monitor_status": t.risk_monitor_status or "not_checked",
-                "risk_score": rm_data.get("risk_score", 0),
+                "risk_monitor_status": rm_status,
+                "reason_code": rm_data.get("reason_code", ""),
                 "confidence": rm_data.get("confidence", 0),
-                "thesis_status": rm_data.get("thesis_status", "unknown"),
-                "exit_urgency": rm_data.get("exit_urgency", "none"),
                 "primary_reason": rm_data.get("primary_reason", ""),
-                "triggered_risks": rm_data.get("triggered_risks", []),
-                "last_checked_at": t.risk_last_checked_at,
-                "source": rm_data.get("_source", "not_checked"),
+                "triggered_rules": rm_data.get("triggered_rules", []),
+                "pnl_percent": rm_data.get("pnl_percent", 0),
+                "pnl_rupees_total": rm_data.get("pnl_rupees_total", 0),
+                "updated_stop_loss": rm_data.get("updated_stop_loss"),
+                "last_checked_at": last_check,
             })
 
         return {

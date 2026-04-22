@@ -62,7 +62,7 @@ def trigger_risk_monitor(db: Session = Depends(get_db)):
     """Manually trigger Agent 4 (Risk Monitor).
 
     Evaluates all active (planned) trades against live market data.
-    Produces HOLD / HOLD_WITH_CAUTION / TIGHTEN_STOPLOSS / PARTIAL_EXIT / EXIT_NOW.
+    Produces HOLD / TIGHTEN_STOPLOSS / PARTIAL_EXIT / EXIT_NOW.
     """
     result = run_risk_monitor(db, force=True)
     return result
