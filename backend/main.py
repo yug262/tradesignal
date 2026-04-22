@@ -60,7 +60,20 @@ def on_shutdown():
 
 @app.get("/api/health")
 def health_check():
-    return {"status": "ok", "version": "2.0.0", "database": "connected", "agent": "active"}
+    db_status = "connected"
+    try:
+        from sqlalchemy import text
+        with database.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as e:
+        db_status = f"error: {str(e)}"
+    
+    return {
+        "status": "ok", 
+        "version": "2.1.0", 
+        "database": db_status, 
+        "agent": "active"
+    }
 
 
 if __name__ == "__main__":

@@ -76,3 +76,8 @@ class DBTradeSignal(Base):
     execution_status = Column(String, default="pending")      # pending | planned | skipped
     executed_at = Column(BigInteger, nullable=True)           # Timestamp when Agent 3 ran
     execution_data = Column(JSON, nullable=True)              # Full Gemini execution plan output
+
+    # -- Risk Monitor Agent (Phase 4) columns --
+    risk_monitor_status = Column(String, nullable=True)       # HOLD | HOLD_WITH_CAUTION | TIGHTEN_STOPLOSS | PARTIAL_EXIT | EXIT_NOW
+    risk_monitor_data = Column(JSON, nullable=True)           # Full risk monitor output JSON
+    risk_last_checked_at = Column(BigInteger, nullable=True)  # Timestamp of last risk check

@@ -140,6 +140,10 @@ def create_database():
             # Risk management columns for Agent 3 position sizing
             ("system_config", "max_loss_per_trade_pct", "FLOAT DEFAULT 1.0"),
             ("system_config", "max_capital_per_trade_pct", "FLOAT DEFAULT 20.0"),
+            # Risk Monitor Agent (Phase 4) columns
+            ("trade_signals", "risk_monitor_status", "TEXT"),
+            ("trade_signals", "risk_monitor_data", "JSON"),
+            ("trade_signals", "risk_last_checked_at", "BIGINT"),
         ]
         for tbl, col, col_type in migrations:
             cur.execute(f"""

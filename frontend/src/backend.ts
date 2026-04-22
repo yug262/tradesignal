@@ -128,4 +128,13 @@ export const api = {
   getAgentStatus() {
     return request<any>("/agent/status");
   },
+
+  // ─── Risk Monitor ──────────────────────────────────────────────────
+  getRiskMonitorState() {
+    return request<any>("/agent/risk-monitor");
+  },
+
+  triggerRiskMonitor() {
+    return request<any>("/agent/risk-monitor", { method: "POST" });
+  },
 };

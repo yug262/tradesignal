@@ -1,4 +1,12 @@
-"""Agent API router -- exposes trading signals, manual triggers, and scheduler status."""
+"""Agent API router — exposes pipeline triggers, trading signals, and scheduler status.
+
+Four-layer pipeline:
+  Agent 1 (Discovery)          — /api/agent/run
+  Agent 2 (Market Open Conf.)  — /api/agent/confirm
+  Agent 3 (Execution Planner)  — /api/agent/execute
+  Agent 4 (Risk Monitor)       — /api/agent/risk-monitor
+  Full pipeline                — /api/agent/run-full-pipeline
+"""
 
 import time
 from datetime import datetime, timezone, timedelta
@@ -18,17 +26,17 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 @router.post("/run")
 def trigger_agent_run(db: Session = Depends(get_db)):
-    """Manually trigger a full agent analysis run (Agent 1: pre-market)."""
+    """Manually trigger Agent 1 (Discovery) — reads news, understands events, saves assessments."""
     result = run_full_analysis(db)
     return result
 
 
 @router.post("/confirm")
 def trigger_confirmation_run(db: Session = Depends(get_db)):
-    """Manually trigger Market Open Confirmation (Agent 2).
-    
-    Fetches live market data and confirms/revises/invalidates
-    today's pending signals from Agent 1.
+    """Manually trigger Agent 2 (Market Open Confirmation).
+
+    Takes today's pending Discovery assessments and validates them
+    against live market-open data.  Does NOT produce entry/stop/target.
     """
     result = run_market_open_confirmation(db)
     return result
@@ -38,33 +46,59 @@ from agent.execution_agent import run_execution_planner
 
 @router.post("/execute")
 def trigger_execution_run(db: Session = Depends(get_db)):
-    """Manually trigger Execution Planner (Agent 3).
-    
-    Fetches confirmed signals and live market data to
-    plan exact execution levels and strategies.
+    """Manually trigger Agent 3 (Execution Planner).
+
+    Takes confirmed signals from Agent 2 and live price context.
+    Produces entry, stop, target, and position sizing with hard risk constraints.
     """
     result = run_execution_planner(db)
     return result
 
 
+from agent.risk_monitor import run_risk_monitor, get_risk_monitor_summary
+
+@router.post("/risk-monitor")
+def trigger_risk_monitor(db: Session = Depends(get_db)):
+    """Manually trigger Agent 4 (Risk Monitor).
+
+    Evaluates all active (planned) trades against live market data.
+    Produces HOLD / HOLD_WITH_CAUTION / TIGHTEN_STOPLOSS / PARTIAL_EXIT / EXIT_NOW.
+    """
+    result = run_risk_monitor(db, force=True)
+    return result
+
+
+@router.get("/risk-monitor")
+def get_risk_monitor_state(db: Session = Depends(get_db)):
+    """Get current risk monitor state for all active trades.
+
+    Returns the last computed risk assessment for each planned trade
+    without re-running the monitor.
+    """
+    return get_risk_monitor_summary(db)
+
+
 @router.post("/run-full-pipeline")
 def trigger_full_pipeline(db: Session = Depends(get_db)):
-    """Run Agent 1 + Agent 2 + Agent 3 back-to-back.
-    
-    Useful for manual runs when you want
-    the complete analysis + confirmation + execution in one click.
+    """Run the full three-layer pipeline back-to-back:
+
+    1. Agent 1 (Discovery)         — news understanding
+    2. Agent 2 (Market Open Conf.) — thesis validation at open
+    3. Agent 3 (Execution Planner) — entry/stop/target with risk sizing
+
+    Useful for manual end-to-end runs outside of scheduler windows.
     """
-    # Phase 1: Pre-market analysis
+    # Layer 1: Discovery
     agent1_result = run_full_analysis(db)
-    
-    # Phase 2: Confirmation with live data
+
+    # Layer 2: Market Open Confirmation
     agent2_result = run_market_open_confirmation(db)
-    
-    # Phase 3: Execution Planner
+
+    # Layer 3: Execution Planning
     agent3_result = run_execution_planner(db)
-    
+
     return {
-        "agent1_pre_market": agent1_result,
+        "agent1_discovery": agent1_result,
         "agent2_confirmation": agent2_result,
         "agent3_execution": agent3_result,
     }
@@ -152,13 +186,11 @@ def get_signals(
 
     signals = query.order_by(db_models.DBTradeSignal.confidence.desc()).all()
 
-    # Build summary
-    buy_count = sum(1 for s in signals if s.signal_type == "BUY")
-    sell_count = sum(1 for s in signals if s.signal_type == "SELL")
-    hold_count = sum(1 for s in signals if s.signal_type == "HOLD")
+    # Discovery summary (based on reasoning.final_verdict stored in reasoning JSON)
+    watch_count = sum(1 for s in signals if s.signal_type == "WATCH")
     no_trade_count = sum(1 for s in signals if s.signal_type == "NO_TRADE")
 
-    # Confirmation summary
+    # Confirmation summary (Agent 2)
     confirmed_count = sum(1 for s in signals if s.confirmation_status == "confirmed")
     revised_count = sum(1 for s in signals if s.confirmation_status == "revised")
     invalidated_count = sum(1 for s in signals if s.confirmation_status == "invalidated")
@@ -168,10 +200,9 @@ def get_signals(
         "market_date": date,
         "total_signals": len(signals),
         "signals_summary": {
-            "buy": buy_count,
-            "sell": sell_count,
-            "hold": hold_count,
-            "no_trade": no_trade_count,
+            # Agent 1 Discovery counts
+            "watch": watch_count,           # IMPORTANT_EVENT → passed to Agent 2
+            "no_trade": no_trade_count,     # MINOR_EVENT / NOISE → auto-skipped
         },
         "confirmation_summary": {
             "confirmed": confirmed_count,
@@ -204,6 +235,10 @@ def get_signals(
                 "execution_status": s.execution_status,
                 "executed_at": s.executed_at,
                 "execution_data": s.execution_data,
+                # Agent 4 risk monitor fields
+                "risk_monitor_status": s.risk_monitor_status,
+                "risk_monitor_data": s.risk_monitor_data,
+                "risk_last_checked_at": s.risk_last_checked_at,
             }
             for s in signals
         ],
