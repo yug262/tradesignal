@@ -396,6 +396,142 @@ def close_paper_trade(
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PARTIAL CLOSE (REDUCE POSITION)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def partial_close_paper_trade(
+    db: Session,
+    trade_id: str,
+    exit_price: float,
+    exit_fraction: float = 0.5,
+    exit_reason: str = "RISK_MONITOR_PARTIAL_EXIT",
+) -> dict:
+    """Partially close an open paper trade — sell a fraction of shares.
+
+    How it works:
+      1. Calculate shares to sell = floor(quantity * exit_fraction)
+      2. Realize PnL on those shares and credit to capital
+      3. Reduce the trade's quantity, position_value, max_loss_at_sl
+      4. Trade stays OPEN with the remaining position
+      5. If exit_fraction rounds down to 0 shares, skip safely
+
+    Args:
+        db: SQLAlchemy session
+        trade_id: ID of the paper trade to partially close
+        exit_price: Current live price at the time of partial exit
+        exit_fraction: Fraction of position to sell (0.0 to 1.0)
+        exit_reason: Reason string for logging
+
+    Returns:
+        Result dict with details of the partial exit.
+    """
+    import math
+
+    # ── Concurrency guard ─────────────────────────────────────────────────
+    trade = db.query(db_models.DBPaperTrade).filter(
+        db_models.DBPaperTrade.id == trade_id,
+        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"]),
+    ).first()
+
+    if not trade:
+        return {"success": False, "error": f"No open trade found with id {trade_id}"}
+
+    # ── Calculate shares to sell ──────────────────────────────────────────
+    exit_fraction = max(0.0, min(1.0, exit_fraction))
+    shares_to_sell = math.floor(trade.quantity * exit_fraction)
+
+    # If rounding gives 0, force at least 1 share (unless only 1 remains)
+    if shares_to_sell == 0 and trade.quantity > 1:
+        shares_to_sell = 1
+
+    # If only 1 share left, a partial exit is effectively a full close
+    if shares_to_sell >= trade.quantity:
+        return close_paper_trade(db, trade_id, exit_price, exit_reason)
+
+    if shares_to_sell <= 0:
+        return {"success": False, "error": f"Cannot partial exit: only {trade.quantity} share(s) remaining"}
+
+    now = _now_ms()
+    remaining_shares = trade.quantity - shares_to_sell
+
+    # ── Calculate realized PnL on the sold portion ────────────────────────
+    if trade.action == "BUY":
+        realized_pnl = (exit_price - trade.entry_price) * shares_to_sell
+    else:
+        realized_pnl = (trade.entry_price - exit_price) * shares_to_sell
+
+    realized_pnl = round(realized_pnl, 2)
+    sold_value = round(shares_to_sell * trade.entry_price, 2)
+
+    # ── Update the trade in-place (reduce position, keep OPEN) ────────────
+    trade.quantity = remaining_shares
+    trade.position_value = round(remaining_shares * trade.entry_price, 2)
+    trade.max_loss_at_sl = round(
+        abs(trade.entry_price - trade.stop_loss) * remaining_shares, 2
+    )
+    trade.current_price = exit_price
+    trade.updated_at = now
+
+    # Update unrealized PnL on remaining position
+    if trade.action == "BUY":
+        remaining_pnl = (exit_price - trade.entry_price) * remaining_shares
+    else:
+        remaining_pnl = (trade.entry_price - exit_price) * remaining_shares
+    trade.pnl = round(remaining_pnl, 2)
+    trade.pnl_percentage = round(
+        (remaining_pnl / trade.position_value * 100) if trade.position_value > 0 else 0.0, 2
+    )
+
+    # ── Log the partial exit ──────────────────────────────────────────────
+    pnl_str = f"+Rs.{realized_pnl:.2f}" if realized_pnl >= 0 else f"-Rs.{abs(realized_pnl):.2f}"
+    _log_action(
+        db, "PAPER_TRADING", trade.symbol, "PARTIAL_EXIT",
+        f"Partial exit: sold {shares_to_sell}/{shares_to_sell + remaining_shares} shares "
+        f"@ Rs.{exit_price:.2f} | Realized P&L: {pnl_str} | "
+        f"Remaining: {remaining_shares} shares",
+        trade_id=trade_id,
+        details={
+            "shares_sold": shares_to_sell,
+            "shares_remaining": remaining_shares,
+            "exit_price": exit_price,
+            "realized_pnl": realized_pnl,
+            "exit_fraction": exit_fraction,
+            "exit_reason": exit_reason,
+        }
+    )
+
+    # ── Credit realized PnL to system capital ─────────────────────────────
+    cfg = db.query(db_models.DBSystemConfig).first()
+    if cfg:
+        cfg.capital = round(cfg.capital + realized_pnl, 2)
+
+    # ── Update portfolio stats ────────────────────────────────────────────
+    update_portfolio_stats(db)
+    db.commit()
+
+    print(f"\n{'='*50}")
+    print(f" [AUTOMATION: PARTIAL EXIT EXECUTED]")
+    print(f"   Trade ID:    {trade_id}")
+    print(f"   Symbol:      {trade.symbol}")
+    print(f"   Sold:        {shares_to_sell} shares @ Rs.{exit_price:.2f}")
+    print(f"   Remaining:   {remaining_shares} shares (still OPEN)")
+    print(f"   Realized:    {pnl_str}")
+    print(f"   Reason:      {exit_reason}")
+    print(f"{'='*50}\n")
+
+    return {
+        "success": True,
+        "trade_id": trade_id,
+        "symbol": trade.symbol,
+        "shares_sold": shares_to_sell,
+        "shares_remaining": remaining_shares,
+        "exit_price": exit_price,
+        "realized_pnl": realized_pnl,
+        "position_value_remaining": trade.position_value,
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # LIVE PRICE FETCH
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -462,11 +598,12 @@ def monitor_open_positions(db: Session = None) -> dict:
                 if trade.status == "PENDING":
                     is_hit = False
                     if trade.current_price:
+                        # Strictly wait for the price to cross or touch the entry line
                         crosses_up = trade.current_price < trade.entry_price and live_price >= trade.entry_price
                         crosses_down = trade.current_price > trade.entry_price and live_price <= trade.entry_price
-                        if crosses_up or crosses_down or abs(live_price - trade.entry_price) / trade.entry_price <= 0.002:
+                        if crosses_up or crosses_down or live_price == trade.entry_price:
                             is_hit = True
-                    elif abs(live_price - trade.entry_price) / trade.entry_price <= 0.002:
+                    elif live_price == trade.entry_price:
                         is_hit = True
 
                     if is_hit:
