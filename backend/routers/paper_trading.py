@@ -186,7 +186,7 @@ def get_analytics(db: Session = Depends(get_db)):
 def refresh_prices(db: Session = Depends(get_db)):
     """Trigger a manual live price refresh for all open positions."""
     open_trades = db.query(db_models.DBPaperTrade).filter(
-        db_models.DBPaperTrade.status == "OPEN"
+        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"])
     ).all()
 
     updated = 0
@@ -196,16 +196,24 @@ def refresh_prices(db: Session = Depends(get_db)):
         price = _fetch_live_price(trade.symbol)
         if price is not None:
             trade.current_price = price
-            if trade.action == "BUY":
-                trade.pnl = round((price - trade.entry_price) * trade.quantity, 2)
+            if trade.status == "PENDING":
+                trade.pnl = 0.0
+                trade.pnl_percentage = 0.0
             else:
-                trade.pnl = round((trade.entry_price - price) * trade.quantity, 2)
-            trade.pnl_percentage = round(
-                (trade.pnl / trade.position_value * 100) if trade.position_value > 0 else 0.0, 2
-            )
+                if trade.action == "BUY":
+                    trade.pnl = round((price - trade.entry_price) * trade.quantity, 2)
+                else:
+                    trade.pnl = round((trade.entry_price - price) * trade.quantity, 2)
+                trade.pnl_percentage = round(
+                    (trade.pnl / trade.position_value * 100) if trade.position_value > 0 else 0.0, 2
+                )
             trade.updated_at = now
             updated += 1
 
+    db.commit()
+
+    # Recalculate portfolio totals (todays_pnl, total_pnl) to include new unrealized PnL
+    update_portfolio_stats(db)
     db.commit()
 
     return {"status": "success", "updated": updated, "total": len(open_trades)}

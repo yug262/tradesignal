@@ -111,7 +111,7 @@ def update_portfolio_stats(db: Session):
 
     # Count trades
     open_trades = db.query(db_models.DBPaperTrade).filter(
-        db_models.DBPaperTrade.status == "OPEN"
+        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"])
     ).all()
 
     closed_trades = db.query(db_models.DBPaperTrade).filter(
@@ -137,21 +137,24 @@ def update_portfolio_stats(db: Session):
     ).timestamp() * 1000)
     todays_closed = [t for t in closed_trades
                      if t.exit_time and t.exit_time >= today_start_ms]
-    todays_pnl = sum(t.pnl for t in todays_closed)
+    todays_closed_pnl = sum(t.pnl for t in todays_closed)
+
+    # Calculate unrealized P&L from open trades
+    unrealized_pnl = sum(t.pnl for t in open_trades if t.status == "OPEN")
 
     # Available cash = initial capital + total P&L from closed - currently used
     portfolio.available_cash = portfolio.total_capital + total_pnl - used_cash
     portfolio.used_cash = round(used_cash, 2)
     portfolio.total_profit = round(total_profit, 2)
     portfolio.total_loss = round(total_loss, 2)
-    portfolio.total_pnl = round(total_pnl, 2)
+    portfolio.total_pnl = round(total_pnl + unrealized_pnl, 2)
     portfolio.win_rate = round((winning / total_closed * 100), 2) if total_closed > 0 else 0.0
     portfolio.total_trades = len(open_trades) + total_closed
     portfolio.open_trades = len(open_trades)
     portfolio.closed_trades = total_closed
     portfolio.winning_trades = winning
     portfolio.losing_trades = losing
-    portfolio.todays_pnl = round(todays_pnl, 2)
+    portfolio.todays_pnl = round(todays_closed_pnl + unrealized_pnl, 2)
     portfolio.todays_date = today
     portfolio.updated_at = _now_ms()
 
@@ -177,6 +180,7 @@ def create_paper_trade(
     signal_id: str = None,
     risk_reward: str = None,
     max_loss_at_sl: float = 0.0,
+    status: str = "OPEN",
 ) -> dict:
     """Create a new paper trade and update portfolio."""
 
@@ -200,7 +204,7 @@ def create_paper_trade(
     if signal_id:
         existing = db.query(db_models.DBPaperTrade).filter(
             db_models.DBPaperTrade.signal_id == signal_id,
-            db_models.DBPaperTrade.status == "OPEN",
+            db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"]),
         ).first()
         if existing:
             return {
@@ -224,7 +228,7 @@ def create_paper_trade(
         current_price=entry_price,
         pnl=0.0,
         pnl_percentage=0.0,
-        status="OPEN",
+        status=status,
         confidence_score=confidence_score,
         risk_level=risk_level,
         trade_reason=trade_reason,
@@ -282,7 +286,7 @@ def close_paper_trade(
 
     trade = db.query(db_models.DBPaperTrade).filter(
         db_models.DBPaperTrade.id == trade_id,
-        db_models.DBPaperTrade.status == "OPEN",
+        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"]),
     ).first()
 
     if not trade:
@@ -389,7 +393,7 @@ def monitor_open_positions(db: Session = None) -> dict:
 
     try:
         open_trades = db.query(db_models.DBPaperTrade).filter(
-            db_models.DBPaperTrade.status == "OPEN"
+            db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"])
         ).all()
 
         if not open_trades:
@@ -405,6 +409,28 @@ def monitor_open_positions(db: Session = None) -> dict:
                     continue
 
                 # Update current price and unrealized P&L
+                if trade.status == "PENDING":
+                    is_hit = False
+                    if trade.current_price:
+                        crosses_up = trade.current_price < trade.entry_price and live_price >= trade.entry_price
+                        crosses_down = trade.current_price > trade.entry_price and live_price <= trade.entry_price
+                        if crosses_up or crosses_down or abs(live_price - trade.entry_price) / trade.entry_price <= 0.002:
+                            is_hit = True
+                    elif abs(live_price - trade.entry_price) / trade.entry_price <= 0.002:
+                        is_hit = True
+
+                    if is_hit:
+                        trade.status = "OPEN"
+                        trade.entry_time = now
+                        trade.current_price = live_price
+                        trade.updated_at = now
+                        _log_action(db, "PAPER_TRADING", trade.symbol, "ORDER_EXECUTED", f"Pending {trade.action} order executed at Rs.{live_price:.2f}", trade_id=trade.id)
+                        db.commit()
+                    else:
+                        trade.current_price = live_price
+                        db.commit()
+                    continue
+
                 if trade.action == "BUY":
                     unrealized_pnl = (live_price - trade.entry_price) * trade.quantity
                 else:
@@ -494,9 +520,14 @@ def auto_create_from_execution(db: Session, signal: db_models.DBTradeSignal) -> 
     action = exec_data.get("action", "AVOID").upper()
     exec_decision = exec_data.get("execution_decision", "NO TRADE").upper()
 
-    # Only create for ENTER NOW decisions
-    if exec_decision != "ENTER NOW" or action not in ("BUY", "SELL"):
+    # Allowed execution decisions for creating a trade
+    allowed_decisions = ["ENTER NOW", "WAIT FOR PULLBACK", "WAIT FOR BREAKOUT"]
+    if exec_decision not in allowed_decisions:
         return None
+
+    # Determine action (Agent 3 might output "WAIT" as action, so we fallback to signal_type)
+    if action not in ("BUY", "SELL"):
+        action = signal.signal_type.upper() if signal.signal_type in ("BUY", "SELL") else "BUY"
 
     entry_plan = exec_data.get("entry_plan", {})
     stop_loss = exec_data.get("stop_loss", {})
@@ -535,6 +566,7 @@ def auto_create_from_execution(db: Session, signal: db_models.DBTradeSignal) -> 
         signal_id=signal.id,
         risk_reward=exec_data.get("risk_reward", ""),
         max_loss_at_sl=sizing.get("max_loss_at_sl", 0),
+        status="PENDING",
     )
 
 
@@ -545,7 +577,7 @@ def auto_create_from_execution(db: Session, signal: db_models.DBTradeSignal) -> 
 def get_open_positions(db: Session) -> list[dict]:
     """Get all open paper trades with current prices."""
     trades = db.query(db_models.DBPaperTrade).filter(
-        db_models.DBPaperTrade.status == "OPEN"
+        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"])
     ).order_by(db_models.DBPaperTrade.entry_time.desc()).all()
 
     return [_trade_to_dict(t) for t in trades]
