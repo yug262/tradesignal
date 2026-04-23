@@ -184,7 +184,16 @@ def get_signals(
     if confirmation_status:
         query = query.filter(db_models.DBTradeSignal.confirmation_status == confirmation_status.lower())
 
-    signals = query.order_by(db_models.DBTradeSignal.confidence.desc()).all()
+    from sqlalchemy import case
+    
+    # Sort: WATCH signals first, then NO_TRADE. Within each group, sort by confidence descending.
+    signals = query.order_by(
+        case(
+            (db_models.DBTradeSignal.signal_type == "WATCH", 0), 
+            else_=1
+        ).asc(),
+        db_models.DBTradeSignal.confidence.desc()
+    ).all()
 
     # Discovery summary (based on reasoning.final_verdict stored in reasoning JSON)
     watch_count = sum(1 for s in signals if s.signal_type == "WATCH")
