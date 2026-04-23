@@ -160,7 +160,7 @@ function OpenPositionsTable({ positions, onRefresh }: { positions: PaperTrade[];
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/30">
-              {["Symbol", "Action", "Qty", "Entry", "Current", "SL", "Target", "P&L", "P&L %", "Mode", ""].map(h => (
+              {["Symbol", "Action", "Status", "Qty", "Entry", "Current", "SL", "Target", "P&L", "P&L %", "Mode", ""].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{h}</th>
               ))}
             </tr>
@@ -170,16 +170,17 @@ function OpenPositionsTable({ positions, onRefresh }: { positions: PaperTrade[];
               <tr key={t.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                 <td className="px-4 py-3 font-semibold">{t.symbol}</td>
                 <td className="px-4 py-3"><Badge variant={t.action === "BUY" ? "default" : "destructive"} className="text-[10px]">{t.action}</Badge></td>
+                <td className="px-4 py-3"><Badge variant={t.status === "PENDING" ? "secondary" : "outline"} className={cn("text-[9px]", t.status === "PENDING" ? "bg-amber-500/20 text-amber-500 border-amber-500/30" : "border-emerald-500/30 text-emerald-400")}>{t.status}</Badge></td>
                 <td className="px-4 py-3 font-mono text-xs">{t.quantity}</td>
                 <td className="px-4 py-3 font-mono text-xs">{fmt(t.entry_price)}</td>
                 <td className="px-4 py-3 font-mono text-xs font-semibold">{t.current_price ? fmt(t.current_price) : "—"}</td>
                 <td className="px-4 py-3 font-mono text-xs text-red-400">{fmt(t.stop_loss)}</td>
                 <td className="px-4 py-3 font-mono text-xs text-emerald-400">{fmt(t.target_price)}</td>
-                <td className={cn("px-4 py-3 font-mono text-xs font-bold", t.pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
-                  {t.pnl >= 0 ? "+" : ""}{fmt(t.pnl)}
+                <td className={cn("px-4 py-3 font-mono text-xs font-bold", t.status === "PENDING" ? "text-muted-foreground font-medium" : (t.pnl >= 0 ? "text-emerald-400" : "text-red-400"))}>
+                  {t.status === "PENDING" ? "—" : (t.pnl >= 0 ? "+" : "") + fmt(t.pnl)}
                 </td>
-                <td className={cn("px-4 py-3 font-mono text-xs", t.pnl_percentage >= 0 ? "text-emerald-400" : "text-red-400")}>
-                  {fmtPct(t.pnl_percentage)}
+                <td className={cn("px-4 py-3 font-mono text-xs", t.status === "PENDING" ? "text-muted-foreground font-medium" : (t.pnl_percentage >= 0 ? "text-emerald-400" : "text-red-400"))}>
+                  {t.status === "PENDING" ? "—" : fmtPct(t.pnl_percentage)}
                 </td>
                 <td className="px-4 py-3"><Badge variant="outline" className="text-[9px]">{t.trade_mode}</Badge></td>
                 <td className="px-4 py-3">

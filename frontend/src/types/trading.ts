@@ -220,7 +220,7 @@ export interface PaperTrade {
   current_price: number | null;
   pnl: number;
   pnl_percentage: number;
-  status: "OPEN" | "CLOSED" | "CANCELLED";
+  status: "OPEN" | "CLOSED" | "CANCELLED" | "PENDING";
   confidence_score: number;
   risk_level: string;
   trade_reason: string;
