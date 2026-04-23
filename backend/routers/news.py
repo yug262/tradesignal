@@ -135,15 +135,16 @@ def fetch_news(db: Session = Depends(get_db)):
                 raw_data = item.get("analysis_data") or item.get("raw_analysis_data", {})
                 
                 # Convert ISO timestamp to milliseconds
+                import time
                 pub_at = item.get("published") or item.get("published_at")
-                pub_at_ms = 0
+                pub_at_ms = int(time.time() * 1000) # Default to now
                 if pub_at:
                     try:
                         # Handle ISO format with offset
                         dt = datetime.fromisoformat(pub_at.replace("Z", "+00:00"))
                         pub_at_ms = int(dt.timestamp() * 1000)
                     except Exception:
-                        pub_at_ms = 0
+                        pass
                 
                 # Convert analyzed_at if present
                 ana_at = item.get("analyzed_at")

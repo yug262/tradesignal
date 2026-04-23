@@ -214,12 +214,15 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
             if not isinstance(final_symbols, list):
                 final_symbols = []
 
+            # Use 'published' from source if available, else 'published_at'
+            raw_pub_time = item.get("published") or item.get("published_at")
+            
             new_art = db_models.NewsArticle(
                 id=item_id,
                 title=item.get("title", "No Title"),
                 description=item.get("description", ""),
                 source=item.get("source", "Unknown"),
-                published_at=_parse_ms(item.get("published_at")),
+                published_at=_parse_ms(raw_pub_time),
                 analyzed_at=_parse_ms(item.get("analyzed_at")),
                 impact_score=impact,
                 impact_summary=item.get("impact_summary", ""),

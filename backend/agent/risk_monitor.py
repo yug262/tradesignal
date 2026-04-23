@@ -80,17 +80,19 @@ def _log_decision(trade_id: str, symbol: str, features: dict, result: dict, old_
     triggered = result.get("triggered_rules", [])
 
     mins = int(time_in_trade // 60)
-    sl_change = f"₹{old_sl:.2f} → ₹{new_sl:.2f}" if new_sl else f"₹{old_sl:.2f} (unch)"
+    sl_change = f"₹{old_sl:.2f} -> ₹{new_sl:.2f}" if new_sl else f"₹{old_sl:.2f} (unchanged)"
 
-    print(
-        f"  [RISK] {symbol:<10} | {decision:<16} | "
-        f"Reason: {reason_code:<25} | "
-        f"LTP: ₹{ltp:.2f} | Entry: ₹{entry:.2f} | Qty: {qty} | "
-        f"PnL: {pnl_pct:+.1f}% (₹{pnl_rupees_total:+.0f}) | "
-        f"MFE: +{mfe_pct:.1f}% | MAE: {mae_pct:.1f}% | "
-        f"SL: {sl_change} | "
-        f"Time: {mins}m | Rules: {triggered}"
-    )
+    print(f"\n{'-'*50}")
+    print(f" [AGENT 4: RISK MONITOR EVALUATION]")
+    print(f"   Symbol:   {symbol}")
+    print(f"   LTP:      ₹{ltp:.2f} (Entry: ₹{entry:.2f})")
+    print(f"   PnL:      {pnl_pct:+.1f}% (₹{pnl_rupees_total:+.0f})")
+    print(f"   MFE/MAE:  +{mfe_pct:.1f}% / {mae_pct:.1f}%")
+    print(f"   Time:     {mins} mins")
+    print(f"   Decision: >> {decision} <<")
+    print(f"   Rule:     {reason_code} ({triggered})")
+    print(f"   SL Info:  {sl_change}")
+    print(f"{'-'*50}\n")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -194,18 +196,27 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
                 # If EXIT_NOW, close the paper trade immediately
                 if decision == "EXIT_NOW":
                     ltp = result.get("_features_snapshot", {}).get("ltp") or trade.current_price
-                    close_paper_trade(db, trade.id, ltp, "RISK_MONITOR_EXIT")
-
-                # Also update DBTradeSignal to keep dashboard UI in sync
-                if trade.signal_id:
-                    sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
-                    if sig:
-                        sig.risk_monitor_status = decision
-                        sig.risk_monitor_data = result
-                        sig.risk_last_checked_at = _now_ms()
-                        # Ensure signal's stop_loss stays in sync with the paper trade
-                        if new_sl is not None and decision == "TIGHTEN_STOPLOSS":
-                            sig.stop_loss = new_sl
+                    close_result = close_paper_trade(db, trade.id, ltp, "RISK_MONITOR_EXIT")
+                    # close_paper_trade already syncs DBTradeSignal.status and
+                    # risk_monitor_status inside its own logic. We only need to
+                    # persist the detailed risk_monitor_data for dashboard display.
+                    if close_result.get("success") and trade.signal_id:
+                        sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
+                        if sig:
+                            sig.risk_monitor_data = result
+                            db.commit()
+                    # If close failed (already closed by 15s monitor), skip gracefully
+                else:
+                    # Non-exit decisions: update DBTradeSignal for dashboard visibility
+                    if trade.signal_id:
+                        sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
+                        if sig:
+                            sig.risk_monitor_status = decision
+                            sig.risk_monitor_data = result
+                            sig.risk_last_checked_at = _now_ms()
+                            # Ensure signal's stop_loss stays in sync with the paper trade
+                            if new_sl is not None and decision == "TIGHTEN_STOPLOSS":
+                                sig.stop_loss = new_sl
 
                 db.commit()
 

@@ -100,6 +100,11 @@ def update_portfolio_stats(db: Session):
     portfolio = get_or_create_portfolio(db)
     _refresh_daily_pnl(portfolio)
 
+    # Sync total_capital from system_config (Settings)
+    cfg = db.query(db_models.DBSystemConfig).first()
+    if cfg:
+        portfolio.total_capital = cfg.capital
+
     # Count trades
     open_trades = db.query(db_models.DBPaperTrade).filter(
         db_models.DBPaperTrade.status == "OPEN"
@@ -130,8 +135,9 @@ def update_portfolio_stats(db: Session):
                      if t.exit_time and t.exit_time >= today_start_ms]
     todays_pnl = sum(t.pnl for t in todays_closed)
 
-    # Available cash = initial capital + total P&L from closed - currently used
-    portfolio.available_cash = portfolio.total_capital + total_pnl - used_cash
+    # Total equity is now the capital from settings
+    # available cash = current capital - currently used in open positions
+    portfolio.available_cash = round(portfolio.total_capital - used_cash, 2)
     portfolio.used_cash = round(used_cash, 2)
     portfolio.total_profit = round(total_profit, 2)
     portfolio.total_loss = round(total_loss, 2)
@@ -240,7 +246,14 @@ def create_paper_trade(
     update_portfolio_stats(db)
     db.commit()
 
-    print(f"  [PAPER TRADE] CREATED: {trade_id} | {action} {quantity}x {symbol} @ Rs.{entry_price:.2f}")
+    print(f"\n{'='*50}")
+    print(f" [AUTOMATION: PAPER TRADE CREATED]")
+    print(f"   Trade ID:  {trade_id}")
+    print(f"   Action:    {action} {quantity}x {symbol}")
+    print(f"   Entry:     Rs.{entry_price:.2f}")
+    print(f"   Targets:   SL Rs.{stop_loss:.2f} | TGT Rs.{target_price:.2f}")
+    print(f"   Reason:    {trade_reason}")
+    print(f"{'='*50}\n")
 
     return {
         "success": True,
@@ -263,15 +276,25 @@ def close_paper_trade(
     exit_price: float,
     exit_reason: str = "MANUAL_EXIT",
 ) -> dict:
-    """Close an open paper trade and calculate P&L."""
+    """Close an open paper trade and calculate P&L.
 
+    Includes concurrency guard: if the trade was already closed by another
+    monitor loop (15s paper monitor vs 30s risk monitor), returns early
+    without double-applying PnL.
+    """
+
+    # ── Concurrency guard: re-query with status='OPEN' filter ────────────
+    # This prevents double-close if both the paper monitor (15s) and
+    # risk monitor (30s) try to close the same trade simultaneously.
     trade = db.query(db_models.DBPaperTrade).filter(
         db_models.DBPaperTrade.id == trade_id,
         db_models.DBPaperTrade.status == "OPEN",
     ).first()
 
     if not trade:
-        return {"success": False, "error": f"No open trade found with id {trade_id}"}
+        # Trade was already closed by the other monitor — safe to skip
+        print(f"  [PAPER TRADE] SKIP CLOSE: {trade_id} — already closed or not found")
+        return {"success": False, "error": f"No open trade found with id {trade_id} (likely already closed)"}
 
     now = _now_ms()
 
@@ -298,6 +321,8 @@ def close_paper_trade(
         "STOP_LOSS_HIT": "STOP_LOSS_TRIGGERED",
         "AGENT_SELL_SIGNAL": "AGENT_SELL",
         "MANUAL_EXIT": "MANUAL_EXIT",
+        "RISK_MONITOR_EXIT": "RISK_MONITOR_EXIT",
+        "TIME_SQUARE_OFF": "TIME_SQUARE_OFF",
     }.get(exit_reason, exit_reason)
 
     pnl_str = f"+Rs.{pnl:.2f}" if pnl >= 0 else f"-Rs.{abs(pnl):.2f}"
@@ -309,11 +334,36 @@ def close_paper_trade(
                  "pnl_percentage": round(pnl_pct, 2), "exit_reason": exit_reason}
     )
 
+    # ── Sync parent DBTradeSignal ────────────────────────────────────────
+    # When a paper trade closes, the originating signal must reflect
+    # the final state so dashboards and analytics stay accurate.
+    if trade.signal_id:
+        sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
+        if sig:
+            sig.status = "closed"
+            sig.risk_monitor_status = exit_reason
+            sig.risk_last_checked_at = now
+
+    # ── Update Global Settings Capital ───────────────────────────────────
+    # This 'connects' paper trading to the Settings page.
+    # Agent 3 uses DBSystemConfig.capital for position sizing, so wins/losses
+    # now automatically affect future trade sizing.
+    cfg = db.query(db_models.DBSystemConfig).first()
+    if cfg:
+        cfg.capital = round(cfg.capital + pnl, 2)
+
     # Update portfolio
     update_portfolio_stats(db)
     db.commit()
 
-    print(f"  [PAPER TRADE] CLOSED: {trade_id} | {exit_reason} | P&L: {pnl_str}")
+    print(f"\n{'='*50}")
+    print(f" [AUTOMATION: PAPER TRADE CLOSED]")
+    print(f"   Trade ID:  {trade_id}")
+    print(f"   Symbol:    {trade.symbol}")
+    print(f"   Reason:    {exit_reason}")
+    print(f"   Exit:      Rs.{exit_price:.2f}")
+    print(f"   P&L:       {pnl_str} ({pnl_pct:+.2f}%)")
+    print(f"{'='*50}\n")
 
     return {
         "success": True,

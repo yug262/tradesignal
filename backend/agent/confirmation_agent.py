@@ -273,12 +273,26 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                 "why": confirmation.get("why_tradable_or_not", ""),
             })
             db.commit()
+
         duration = _now_ms() - started_at
 
         print(f"\n{'='*60}")
         print(f"[DONE] Agent 2 Pipeline Complete")
         print(f"   Duration: {duration}ms")
         print(f"{'='*60}\n")
+
+        # -- Step 4: Auto-trigger Agent 3 (Execution Planner) if signals confirmed --
+        agent3_result = None
+        if summary["confirmed"] > 0:
+            try:
+                print(f"\n[AUTO] {summary['confirmed']} signals confirmed. Triggering Agent 3 (Execution Planner)...")
+                from agent.execution_agent import run_execution_planner
+                agent3_result = run_execution_planner(db)
+            except Exception as e:
+                print(f"\n[ERROR] Auto-triggering Agent 3 failed: {e}")
+                import traceback
+                traceback.print_exc()
+                agent3_result = {"status": "error", "message": str(e)}
 
         return {
             "run_id": run_id,
@@ -287,6 +301,7 @@ def run_market_open_confirmation(db: Session = None) -> dict:
             "total_checked": len(tradable_signals),
             "summary": summary,
             "results": results,
+            "agent3_execution": agent3_result,
             "duration_ms": duration,
         }
 

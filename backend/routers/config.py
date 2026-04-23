@@ -93,6 +93,10 @@ def update_config(new_cfg: SystemConfig, db: Session = Depends(get_db)):
         cfg.max_loss_per_trade_pct = new_cfg.max_loss_per_trade_pct
         cfg.max_capital_per_trade_pct = new_cfg.max_capital_per_trade_pct
         
+        # Sync portfolio capital
+        from agent.paper_trading_engine import update_portfolio_stats
+        update_portfolio_stats(db)
+        
         db.commit()
         
         # Sync in-memory
@@ -117,6 +121,10 @@ def reset_config(db: Session = Depends(get_db)):
     cfg.processing_mode = defaults.processing_mode
     cfg.max_loss_per_trade_pct = defaults.max_loss_per_trade_pct
     cfg.max_capital_per_trade_pct = defaults.max_capital_per_trade_pct
+    
+    # Sync portfolio capital
+    from agent.paper_trading_engine import update_portfolio_stats
+    update_portfolio_stats(db)
     
     db.commit()
     

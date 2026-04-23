@@ -621,6 +621,12 @@ def _build_output(result: dict, features: dict, triggered_rules: list) -> dict:
 # HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
+def _pct_diff(price1: float, price2: float) -> float:
+    """Calculate absolute percentage difference between two prices."""
+    if price2 == 0:
+        return 0.0
+    return abs(price1 - price2) / price2 * 100.0
+
 def _is_better_sl(proposed: float, current: float, is_long: bool) -> bool:
     """Check if proposed SL is strictly better (tighter) than current SL."""
     if current <= 0:
