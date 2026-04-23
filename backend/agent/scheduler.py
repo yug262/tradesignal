@@ -266,7 +266,6 @@ def _risk_monitor_job():
                 f"[RISK MONITOR] {now.strftime('%H:%M:%S')} | "
                 f"{total} trades | "
                 f"HOLD:{summary.get('hold', 0)} "
-                f"CAUTION:{summary.get('hold_with_caution', 0)} "
                 f"TIGHTEN:{summary.get('tighten_stoploss', 0)} "
                 f"PARTIAL:{summary.get('partial_exit', 0)} "
                 f"EXIT:{summary.get('exit_now', 0)} "

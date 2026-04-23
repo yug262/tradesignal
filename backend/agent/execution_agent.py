@@ -7,6 +7,7 @@ a precise execution plan using LIVE market data.
 
 import time
 import uuid
+import traceback
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 
@@ -24,6 +25,45 @@ def _market_date_str() -> str:
 
 def _now_ms() -> int:
     return int(time.time() * 1000)
+
+
+def _validate_execution_plan(plan: dict) -> dict | None:
+    """Validate that an execution plan has all required numeric fields.
+
+    Returns a dict of validated values if valid, or None if incomplete.
+    This is the final structural gate before any paper trade creation.
+    """
+    if not isinstance(plan, dict):
+        return None
+
+    ep = plan.get("entry_plan", {})
+    sl = plan.get("stop_loss", {})
+    tg = plan.get("target", {})
+    sizing = plan.get("position_sizing", {})
+
+    entry_val = ep.get("entry_price") if isinstance(ep, dict) else None
+    sl_val = sl.get("price") if isinstance(sl, dict) else None
+    tg_val = tg.get("price") if isinstance(tg, dict) else None
+    shares_val = sizing.get("position_size_shares", 0) if isinstance(sizing, dict) else 0
+
+    # All four must be positive numbers
+    try:
+        if not (entry_val and float(entry_val) > 0
+                and sl_val and float(sl_val) > 0
+                and tg_val and float(tg_val) > 0
+                and shares_val and int(shares_val) > 0):
+            return None
+    except (TypeError, ValueError):
+        return None
+
+    return {
+        "entry_price": float(entry_val),
+        "stop_loss": float(sl_val),
+        "target_price": float(tg_val),
+        "shares": int(shares_val),
+        "position_size_inr": sizing.get("position_size_inr", 0) if isinstance(sizing, dict) else 0,
+        "capital_used_pct": sizing.get("capital_used_pct", 0) if isinstance(sizing, dict) else 0,
+    }
 
 
 def run_execution_planner(db: Session = None) -> dict:
@@ -89,21 +129,26 @@ def run_execution_planner(db: Session = None) -> dict:
         symbols = list(set(s.symbol for s in pending_signals))
         live_data_map = fetch_stock_data_for_symbols(symbols)
 
-        # -- Step 4: Run Execution Planner (CONCURRENT) ---------------------
+        # -- Step 4: Build tasks (keyed by signal ID, not symbol) -----------
         print(f"\n[STEP 4] Running Gemini Execution Planner ({len(pending_signals)} signals, concurrent)...")
         results = []
         summary = {"planned": 0, "avoided": 0, "skipped": 0}
 
+        # tasks: list of (signal, gemini_input) — preserves per-signal identity
         tasks = []
         for sig in pending_signals:
             live_data = live_data_map.get(sig.symbol)
             if not live_data:
                 print(f"      [SKIP] {sig.symbol}: No live data — isolated fetch failure")
                 sig.execution_status = "skipped"
-                sig.status = "invalidated"
                 sig.executed_at = _now_ms()
-                sig.execution_data = {"error": "live_data_missing"}
-                summary["avoided"] += 1
+                sig.execution_data = {
+                    "action": "AVOID",
+                    "execution_decision": "NO TRADE",
+                    "why_now_or_why_wait": "No live data available — cannot plan execution.",
+                    "_source": "no_data_skip"
+                }
+                summary["skipped"] += 1
                 continue
 
             agent2_view = sig.confirmation_data if isinstance(sig.confirmation_data, dict) else {}
@@ -186,96 +231,172 @@ def run_execution_planner(db: Session = None) -> dict:
             }
             tasks.append((sig, agent3_input))
 
-        db.commit() # Save any skipped signals
+        # Persist skipped signals before moving to Gemini calls
+        db.flush()
 
-        # Run Gemini calls concurrently
+        # -- Step 5: Run Gemini calls concurrently & Process results IMMEDIATELY -----
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        def _execute_one(symbol, inp):
-            print(f"      [GEMINI] Agent 3 planning {symbol}...")
+        from agent.paper_trading_engine import auto_create_from_execution, _log_action
+
+        def _execute_one(signal_id: str, symbol: str, inp: dict):
+            """Run Gemini for a single signal. Returns (signal_id, result_dict)."""
+            print(f"      [GEMINI] Agent 3 planning {symbol} (sig={signal_id[:12]})...")
             try:
                 res = plan_execution(inp, risk_config=risk_config)
                 action = res.get("action", "AVOID").upper()
                 exec_dec = res.get("execution_decision", "NO TRADE").upper()
                 print(f"      [RESULT] {symbol}: {action} | {exec_dec} | Confidence: {res.get('confidence')}")
-                return symbol, res
+                return signal_id, res
             except Exception as e:
-                print(f"      [ERROR] {symbol}: {e}")
-                return symbol, None
+                print(f"      [ERROR] {symbol} (sig={signal_id[:12]}): {e}")
+                return signal_id, None
 
-        results_map = {}
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            futures = {pool.submit(_execute_one, t[0].symbol, t[1]): t[0].symbol for t in tasks}
-            for future in as_completed(futures):
-                sym = futures[future]
-                try:
-                    s, result = future.result()
-                    if result is not None:
-                        results_map[s] = result
-                except Exception as e:
-                    print(f"   [ERROR] Thread for {sym} failed: {e}")
+        # Map signal IDs to objects for immediate lookups
+        sig_map = {t[0].id: t[0] for t in tasks}
 
-        # Write results to DB sequentially
-        for sig, _ in tasks:
-            execution_plan = results_map.get(sig.symbol)
-            if not execution_plan:
-                continue
+        if tasks:
+            with ThreadPoolExecutor(max_workers=5) as pool:
+                futures = {
+                    pool.submit(_execute_one, t[0].id, t[0].symbol, t[1]): t[0].id
+                    for t in tasks
+                }
+                for future in as_completed(futures):
+                    sig_id = futures[future]
+                    sig = sig_map.get(sig_id)
+                    if not sig: continue
 
-            action = execution_plan.get("action", "AVOID").upper()
-            exec_dec = execution_plan.get("execution_decision", "NO TRADE").upper()
+                    try:
+                        returned_id, execution_plan = future.result()
+                        
+                        if not execution_plan:
+                            # Gemini returned nothing for this signal
+                            sig.execution_status = "skipped"
+                            sig.executed_at = _now_ms()
+                            sig.execution_data = {
+                                "action": "AVOID",
+                                "execution_decision": "NO TRADE",
+                                "why_now_or_why_wait": "Gemini call failed or returned no result.",
+                                "_source": "gemini_failure"
+                            }
+                            summary["skipped"] += 1
+                            _log_action(db, "Agent 3 (Execution)", sig.symbol, "AVOID",
+                                        "Execution skipped: Gemini returned no result",
+                                        confidence=0)
+                            db.commit()
+                            continue
 
-            if exec_dec == "NO TRADE":
-                sig.execution_status = "skipped"
-                sig.status = "invalidated"
-            elif exec_dec == "AVOID CHASE":
-                sig.execution_status = "skipped"
-                sig.status = "confirmed" 
-            else:
-                sig.execution_status = "planned"
-                sig.status = "planned"
-            
-            sig.executed_at = _now_ms()
-            sig.execution_data = execution_plan
-            
-            if sig.execution_status == "planned":
-                ep = execution_plan.get("entry_plan", {})
-                sl = execution_plan.get("stop_loss", {})
-                tg = execution_plan.get("target", {})
-                sizing = execution_plan.get("position_sizing", {})
+                        action = execution_plan.get("action", "AVOID").upper()
+                        exec_dec = execution_plan.get("execution_decision", "NO TRADE").upper()
 
-                sig.signal_type = "BUY" if action == "BUY" else "SELL" if action == "SELL" else "WATCH"
-                sig.entry_price = ep.get("entry_price")
-                sig.stop_loss = sl.get("price")
-                sig.target_price = tg.get("price")
-                summary["planned"] += 1
+                        # Always persist Gemini result regardless of outcome
+                        sig.executed_at = _now_ms()
+                        sig.execution_data = execution_plan
 
-                ps = sizing
-                shares = ps.get("position_size_shares", 0)
-                pos_inr = ps.get("position_size_inr", 0)
-                cap_pct = ps.get("capital_used_pct", 0)
-                print(f"      [SIZING] {shares} shares @ Rs.{ep.get('entry_price', 0)} "
-                      f"= Rs.{pos_inr:,.0f} ({cap_pct}% of capital)")
+                        # ── Decision routing ─────────────────────────────────────
+                        if exec_dec == "NO TRADE":
+                            sig.execution_status = "skipped"
+                            sig.status = "invalidated"
+                            summary["avoided"] += 1
+                            _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
+                                        f"Execution avoided: {exec_dec}",
+                                        confidence=execution_plan.get('confidence', 0))
 
-                from agent.paper_trading_engine import auto_create_from_execution, _log_action
-                pt_result = auto_create_from_execution(db, sig)
-                if pt_result and pt_result.get("success"):
-                    print(f"      [PAPER TRADE] Auto-created: {pt_result['trade_id']}")
-                elif pt_result and not pt_result.get("success"):
-                    print(f"      [PAPER TRADE] Skipped: {pt_result.get('error', 'unknown')}")
-                    
-                _log_action(db, "Agent 3 (Execution)", sig.symbol, action, f"Execution planned: {exec_dec} ({action}). SL: {sl.get('price')}, Target: {tg.get('price')}", confidence=execution_plan.get('confidence', 0))
-            else:
-                summary["avoided"] += 1
-                from agent.paper_trading_engine import _log_action
-                _log_action(db, "Agent 3 (Execution)", sig.symbol, action, f"Execution avoided: {exec_dec}", confidence=execution_plan.get('confidence', 0))
+                        elif exec_dec == "AVOID CHASE":
+                            sig.execution_status = "skipped"
+                            sig.status = "confirmed"  # Retryable
+                            summary["avoided"] += 1
+                            _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
+                                        f"Execution avoided: {exec_dec}",
+                                        confidence=execution_plan.get('confidence', 0))
 
-            results.append({
-                "symbol": sig.symbol,
-                "action": action,
-                "execution_decision": exec_dec,
-                "confidence": execution_plan.get("confidence", 0),
-                "why": execution_plan.get("why_now_or_why_wait", "")
-            })
-            db.commit()
+                        elif exec_dec == "ENTER NOW":
+                            # ── Validate plan BEFORE marking as planned ──────────
+                            validated = _validate_execution_plan(execution_plan)
+
+                            if validated is None:
+                                ep = execution_plan.get("entry_plan", {})
+                                sl = execution_plan.get("stop_loss", {})
+                                tg = execution_plan.get("target", {})
+                                sz = execution_plan.get("position_sizing", {})
+                                print(f"      [WARN] {sig.symbol}: ENTER NOW but plan is incomplete "
+                                      f"(entry={ep.get('entry_price') if isinstance(ep, dict) else None}, "
+                                      f"sl={sl.get('price') if isinstance(sl, dict) else None}, "
+                                      f"tg={tg.get('price') if isinstance(tg, dict) else None}, "
+                                      f"shares={sz.get('position_size_shares') if isinstance(sz, dict) else None}) "
+                                      f"— downgrading to skipped")
+                                sig.execution_status = "skipped"
+                                sig.status = "confirmed"  # Retryable
+                                summary["skipped"] += 1
+                                _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
+                                            f"Execution skipped: ENTER NOW with incomplete plan data",
+                                            confidence=execution_plan.get('confidence', 0))
+                            else:
+                                # Plan is fully validated — NOW mark as planned
+                                sig.execution_status = "planned"
+                                sig.status = "planned"
+                                sig.signal_type = "BUY" if action == "BUY" else "SELL" if action == "SELL" else "WATCH"
+                                sig.entry_price = validated["entry_price"]
+                                sig.stop_loss = validated["stop_loss"]
+                                sig.target_price = validated["target_price"]
+                                summary["planned"] += 1
+
+                                print(f"      [SIZING] {validated['shares']} shares @ Rs.{validated['entry_price']} "
+                                      f"= Rs.{validated['position_size_inr']:,.0f} ({validated['capital_used_pct']}% of capital)")
+
+                                # Paper trade creation — final gate (happens NOW)
+                                pt_result = auto_create_from_execution(db, sig)
+                                if pt_result and pt_result.get("success"):
+                                    print(f"      [PAPER TRADE] Auto-created: {pt_result['trade_id']}")
+                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
+                                                f"Execution planned: {exec_dec} ({action}). "
+                                                f"SL: {validated['stop_loss']}, Target: {validated['target_price']}",
+                                                confidence=execution_plan.get('confidence', 0))
+                                elif pt_result and not pt_result.get("success"):
+                                    # Paper trade creation failed — downgrade to retryable
+                                    print(f"      [PAPER TRADE] Failed: {pt_result.get('error', 'unknown')} — reverting signal to confirmed")
+                                    sig.execution_status = "skipped"
+                                    sig.status = "confirmed"
+                                    summary["planned"] -= 1  # Undo the planned count
+                                    summary["skipped"] += 1
+                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
+                                                f"Execution skipped: paper trade creation failed — {pt_result.get('error', 'unknown')}",
+                                                confidence=execution_plan.get('confidence', 0))
+                                else:
+                                    # pt_result is None — not an ENTER NOW or missing fields (already guarded)
+                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
+                                                f"Execution planned: {exec_dec} ({action}). "
+                                                f"SL: {validated['stop_loss']}, Target: {validated['target_price']}",
+                                                confidence=execution_plan.get('confidence', 0))
+
+                        else:
+                            # Unknown decision — treat as avoided
+                            sig.execution_status = "skipped"
+                            sig.status = "confirmed"
+                            summary["avoided"] += 1
+                            _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
+                                        f"Execution avoided: unrecognized decision '{exec_dec}'",
+                                        confidence=execution_plan.get('confidence', 0))
+
+                        results.append({
+                            "signal_id": sig.id,
+                            "symbol": sig.symbol,
+                            "action": action,
+                            "execution_decision": exec_dec,
+                            "confidence": execution_plan.get("confidence", 0),
+                            "why": execution_plan.get("why_now_or_why_wait", "")
+                        })
+
+                        # Commit at signal boundary — each signal is a clean transaction
+                        db.commit()
+
+                    except Exception as e:
+                        db.rollback()
+                        print(f"      [ERROR] Failed to process execution result for {sig.symbol}: {e}")
+                        traceback.print_exc()
+                        summary["skipped"] += 1
+                traceback.print_exc()
+                summary["skipped"] += 1
+
         duration = _now_ms() - started_at
         
         print(f"\n{'='*60}")
