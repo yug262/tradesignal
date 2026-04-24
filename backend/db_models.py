@@ -169,3 +169,16 @@ class DBAgentLog(Base):
     details = Column(JSON, nullable=True)                  # Extra structured data
     trade_id = Column(String, nullable=True)               # Reference to paper_trades.id
     created_at = Column(BigInteger, nullable=False)
+
+
+class DBIndicatorData(Base):
+    """Stores technical indicator values for stocks as arrays."""
+    __tablename__ = "indicator_data"
+
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    symbol = Column(String, nullable=False, index=True)
+    indicator_name = Column(String, nullable=False)
+    timeframe = Column(String, nullable=False)             # 1m | 1D
+    timestamps = Column(ARRAY(BigInteger), default=[])     # Array of ms epochs
+    values = Column(ARRAY(Float), default=[])              # Array of calculated values
+    updated_at = Column(BigInteger, nullable=False)

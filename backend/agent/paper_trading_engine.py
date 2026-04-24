@@ -111,24 +111,35 @@ def update_portfolio_stats(db: Session):
 
     # Count trades
     open_trades = db.query(db_models.DBPaperTrade).filter(
-        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"])
+        db_models.DBPaperTrade.status == "OPEN"
+    ).all()
+
+    pending_trades = db.query(db_models.DBPaperTrade).filter(
+        db_models.DBPaperTrade.status == "PENDING"
     ).all()
 
     closed_trades = db.query(db_models.DBPaperTrade).filter(
         db_models.DBPaperTrade.status == "CLOSED"
     ).all()
 
-    # Calculate used cash (sum of open position values)
+    # Calculate used cash (sum of open and pending position values)
     used_cash = sum(t.position_value for t in open_trades)
+    reserved_cash = sum(t.position_value for t in pending_trades)
 
     # Calculate total P&L from closed trades
     total_pnl = sum(t.pnl for t in closed_trades)
     total_profit = sum(t.pnl for t in closed_trades if t.pnl > 0)
     total_loss = sum(t.pnl for t in closed_trades if t.pnl < 0)
 
+    # Win rate strictly from executed trades
     winning = sum(1 for t in closed_trades if t.pnl > 0)
     losing = sum(1 for t in closed_trades if t.pnl <= 0)
-    total_closed = len(closed_trades)
+    total_executed = winning + losing
+
+    # All completed (Closed + Cancelled)
+    cancelled_count = db.query(db_models.DBPaperTrade).filter(
+        db_models.DBPaperTrade.status == "CANCELLED"
+    ).count()
 
     # Today's closed trades P&L
     today = _market_date_str()
@@ -140,18 +151,18 @@ def update_portfolio_stats(db: Session):
     todays_closed_pnl = sum(t.pnl for t in todays_closed)
 
     # Calculate unrealized P&L from open trades
-    unrealized_pnl = sum(t.pnl for t in open_trades if t.status == "OPEN")
+    unrealized_pnl = sum(t.pnl for t in open_trades)
 
-    # Available cash = initial capital + total P&L from closed - currently used
-    portfolio.available_cash = portfolio.total_capital + total_pnl - used_cash
-    portfolio.used_cash = round(used_cash, 2)
+    # Available cash = initial capital + total P&L from closed - (used + reserved)
+    portfolio.available_cash = portfolio.total_capital + total_pnl - (used_cash + reserved_cash)
+    portfolio.used_cash = round(used_cash + reserved_cash, 2)
     portfolio.total_profit = round(total_profit, 2)
     portfolio.total_loss = round(total_loss, 2)
     portfolio.total_pnl = round(total_pnl + unrealized_pnl, 2)
-    portfolio.win_rate = round((winning / total_closed * 100), 2) if total_closed > 0 else 0.0
-    portfolio.total_trades = len(open_trades) + total_closed
-    portfolio.open_trades = len(open_trades)
-    portfolio.closed_trades = total_closed
+    portfolio.win_rate = round((winning / total_executed * 100), 2) if total_executed > 0 else 0.0
+    portfolio.total_trades = len(open_trades) + len(pending_trades) + total_executed + cancelled_count
+    portfolio.open_trades = len(open_trades) + len(pending_trades)
+    portfolio.closed_trades = total_executed + cancelled_count
     portfolio.winning_trades = winning
     portfolio.losing_trades = losing
     portfolio.todays_pnl = round(todays_closed_pnl + unrealized_pnl, 2)
@@ -198,6 +209,36 @@ def create_paper_trade(
         return {
             "success": False,
             "error": f"Insufficient cash. Need Rs.{position_value:,.2f} but only Rs.{portfolio.available_cash:,.2f} available."
+        }
+
+    # ── Portfolio Rules Check ──
+    cfg = db.query(db_models.DBSystemConfig).first()
+    
+    # 1. Max Open Positions
+    max_open = cfg.max_open_positions if cfg else 5
+    current_open = db.query(db_models.DBPaperTrade).filter(
+        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"])
+    ).count()
+    if current_open >= max_open:
+        return {
+            "success": False,
+            "error": f"Risk Limit: Max {max_open} open/pending positions allowed."
+        }
+
+    # 2. Max Daily Loss
+    max_loss_pct = cfg.max_daily_loss_pct if cfg else 3.0
+    if portfolio.todays_pnl < -(portfolio.total_capital * max_loss_pct / 100):
+        return {
+            "success": False,
+            "error": f"Risk Limit: Daily loss limit ({max_loss_pct}%) reached. Trading suspended for today."
+        }
+
+    # 3. Market Time Rule (No new trades after 15:10 for intraday)
+    now_ist = datetime.now(IST)
+    if trade_mode == "INTRADAY" and (now_ist.hour > 15 or (now_ist.hour == 15 and now_ist.minute >= 10)):
+         return {
+            "success": False,
+            "error": "Risk Limit: No new intraday trades allowed after 15:10 IST."
         }
 
     # Check for duplicate (same symbol + signal_id already open)
@@ -294,7 +335,32 @@ def close_paper_trade(
 
     now = _now_ms()
 
-    # Calculate P&L
+    # Handle PENDING trades (Cancellation vs Closing)
+    if trade.status == "PENDING":
+        trade.exit_price = None
+        trade.current_price = None
+        trade.pnl = 0.0
+        trade.pnl_percentage = 0.0
+        trade.status = "CANCELLED"
+        trade.exit_reason = f"UNFILLED_{exit_reason}"
+        trade.exit_time = now
+        trade.updated_at = now
+
+        _log_action(
+            db, "PAPER_TRADING", trade.symbol, "ORDER_CANCELLED",
+            f"Pending order for {trade.symbol} cancelled/expired. Reason: {exit_reason}",
+            trade_id=trade_id
+        )
+        update_portfolio_stats(db)
+        db.commit()
+        return {
+            "success": True,
+            "trade_id": trade_id,
+            "status": "CANCELLED",
+            "pnl": 0.0
+        }
+
+    # Calculate P&L for OPEN trades
     if trade.action == "BUY":
         pnl = (exit_price - trade.entry_price) * trade.quantity
     else:
@@ -584,9 +650,9 @@ def get_open_positions(db: Session) -> list[dict]:
 
 
 def get_closed_positions(db: Session, limit: int = 50) -> list[dict]:
-    """Get closed paper trades, most recent first."""
+    """Get closed and cancelled paper trades, most recent first."""
     trades = db.query(db_models.DBPaperTrade).filter(
-        db_models.DBPaperTrade.status == "CLOSED"
+        db_models.DBPaperTrade.status.in_(["CLOSED", "CANCELLED"])
     ).order_by(db_models.DBPaperTrade.exit_time.desc()).limit(limit).all()
 
     return [_trade_to_dict(t) for t in trades]

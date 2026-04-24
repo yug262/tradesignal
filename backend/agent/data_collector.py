@@ -6,6 +6,11 @@ import traceback
 import httpx
 from datetime import datetime
 from sqlalchemy.orm import Session
+import numpy as np
+try:
+    import talib
+except ImportError:
+    talib = None
 
 import db_models
 from routers.stocks import get_accurate_stock_data
@@ -439,4 +444,162 @@ def _fetch_rich_stock_data(symbol: str) -> dict:
             data["error"] = str(e)
 
     return data
+
+
+def _fetch_raw_candles(symbol: str, interval: int, count: int = 50) -> list:
+    """Internal helper to fetch raw candles from Groww."""
+    clean = symbol.replace(".NS", "").strip().upper()
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+    }
+    
+    now_ms = int(time.time() * 1000)
+    # Provide enough buffer to ensure we get 'count' candles even across weekends/holidays
+    # 1440m (Daily) -> 1 day per candle. 50 candles = 50 trading days. Need ~70 calendar days.
+    # 1m (Intraday) -> 1 min per candle. 50 candles = 50 mins. Need a few hours if near open.
+    if interval == 1440:
+        start_ms = now_ms - (86400 * count * 1.5 * 1000) 
+    else:
+        start_ms = now_ms - (60 * count * 5 * 1000) # 5x buffer for intraday gaps
+
+    chart_url = (
+        f"https://groww.in/v1/api/charting_service/v2/chart/"
+        f"exchange/NSE/segment/CASH/{clean}"
+        f"?intervalInMinutes={interval}&minimal=false"
+        f"&startTimeInMillis={int(start_ms)}&endTimeInMillis={now_ms}"
+    )
+    
+    try:
+        with httpx.Client(timeout=10.0, headers=headers) as client:
+            res = client.get(chart_url)
+            if res.status_code == 200:
+                candles = res.json().get("candles", [])
+                return candles[-count:] if len(candles) > count else candles
+    except Exception as e:
+        print(f"  [ERROR] Candle fetch failed for {symbol}: {e}")
+    return []
+
+
+def fetch_indicator_data(db: Session, symbol: str, trade_mode: str, indicator_name: str) -> list:
+    """
+    Fetch last 20 candle data and calculate the specified TA-Lib indicator.
+    Timeframe: 1 day for DELIVERY, 1m for INTRADAY.
+    Saves the results to DBIndicatorData.
+    """
+    if talib is None:
+        print("  [ERROR] TA-Lib is not installed. Cannot calculate indicator.")
+        return []
+
+    # 1. Determine timeframe
+    # User: Delivery -> 1 day, Intraday -> 1m
+    interval = 1440 if trade_mode.upper() == "DELIVERY" else 1
+    tf_str = "1D" if interval == 1440 else "1m"
+    
+    print(f"  [INDICATOR] Fetching {indicator_name} for {symbol} ({tf_str})...")
+
+    # 2. Fetch candles
+    # We need more than 20 candles to calculate indicators accurately for the target 20 bars.
+    # For many indicators (like RSI 14), we need at least period+1 bars. 
+    # Fetching 60 candles to be safe and return the last 20.
+    candles = _fetch_raw_candles(symbol, interval, count=60)
+    if not candles or len(candles) < 20:
+        print(f"  [WARN] Not enough candle data for {symbol} to calculate indicator.")
+        return []
+
+    # 3. Prepare data for TA-Lib (numpy arrays)
+    # Candle format: [timestamp, open, high, low, close, volume]
+    try:
+        highs = np.array([float(c[2]) for c in candles])
+        lows = np.array([float(c[3]) for c in candles])
+        closes = np.array([float(c[4]) for c in candles])
+        timestamps = [c[0] for c in candles]
+    except (IndexError, ValueError) as e:
+        print(f"  [ERROR] Data parsing error for {symbol}: {e}")
+        return []
+
+    # 4. Execute TA-Lib indicator
+    try:
+        func = getattr(talib, indicator_name.upper())
+        # Most common indicators take (close) or (high, low, close)
+        # We attempt to call with appropriate parameters based on the indicator name
+        if indicator_name.upper() in ["RSI", "SMA", "EMA", "WMA", "MOM", "ROC", "TRIX"]:
+            result = func(closes)
+        elif indicator_name.upper() in ["ATR", "NATR", "TRANGE", "CCI", "WILLR"]:
+            result = func(highs, lows, closes)
+        elif indicator_name.upper() in ["MACD"]:
+            macd, signal, hist = func(closes)
+            result = macd # Store the main MACD line; could be expanded to store all
+        elif indicator_name.upper() in ["BBANDS"]:
+            upper, middle, lower = func(closes)
+            result = middle
+        else:
+            # Fallback: try with closes
+            result = func(closes)
+    except AttributeError:
+        print(f"  [ERROR] Indicator '{indicator_name}' not found in TA-Lib.")
+        return []
+    except Exception as e:
+        print(f"  [ERROR] TA-Lib execution failed for {indicator_name}: {e}")
+        return []
+
+    if result is None:
+        return []
+
+    # 5. Extract last 20 values and save to DB
+    now_ms = int(time.time() * 1000)
+    output = []
+
+    if isinstance(result, tuple):
+        result = result[0]
+
+    # We iterate backwards from the end to get the last 20 valid points
+    valid_points = []
+    for i in range(len(result) - 1, -1, -1):
+        val = result[i]
+        if not np.isnan(val):
+            valid_points.append((timestamps[i], float(val)))
+        if len(valid_points) >= 20:
+            break
+    
+    # Reverse to keep chronological order
+    valid_points.reverse()
+    
+    if not valid_points:
+        return []
+
+    # Prepare arrays for DB storage
+    ts_array = [p[0] for p in valid_points]
+    val_array = [p[1] for p in valid_points]
+
+    try:
+        # Check if already exists to update, or create new
+        existing = db.query(db_models.DBIndicatorData).filter(
+            db_models.DBIndicatorData.symbol == symbol,
+            db_models.DBIndicatorData.indicator_name == indicator_name.upper(),
+            db_models.DBIndicatorData.timeframe == tf_str
+        ).first()
+
+        if existing:
+            existing.timestamps = ts_array
+            existing.values = val_array
+            existing.updated_at = now_ms
+        else:
+            new_entry = db_models.DBIndicatorData(
+                symbol=symbol,
+                indicator_name=indicator_name.upper(),
+                timeframe=tf_str,
+                timestamps=ts_array,
+                values=val_array,
+                updated_at=now_ms
+            )
+            db.add(new_entry)
+        
+        db.commit()
+        print(f"  [OK] Calculated {indicator_name} for {symbol}. Saved array of {len(val_array)} points.")
+    except Exception as e:
+        print(f"  [ERROR] Database error for {symbol} array storage: {e}")
+        db.rollback()
+
+    # Still return the same output format for the caller
+    return [{"timestamp": ts, "value": val} for ts, val in valid_points]
 

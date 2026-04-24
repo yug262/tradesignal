@@ -206,7 +206,7 @@ function ClosedPositionsTable({ positions }: { positions: PaperTrade[] }) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-border bg-muted/30">
-              {["Symbol", "Action", "Qty", "Entry", "Exit", "P&L", "P&L %", "Exit Reason", "Duration", "Time"].map(h => (
+              {["Symbol", "Action", "Status", "Qty", "Entry", "Exit", "P&L", "P&L %", "Exit Reason", "Duration", "Time"].map(h => (
                 <th key={h} className="px-4 py-3 text-left text-[11px] font-semibold text-muted-foreground uppercase tracking-wider">{h}</th>
               ))}
             </tr>
@@ -216,20 +216,32 @@ function ClosedPositionsTable({ positions }: { positions: PaperTrade[] }) {
               <tr key={t.id} className="border-b border-border/50 hover:bg-muted/20 transition-colors">
                 <td className="px-4 py-3 font-semibold">{t.symbol}</td>
                 <td className="px-4 py-3"><Badge variant={t.action === "BUY" ? "default" : "destructive"} className="text-[10px]">{t.action}</Badge></td>
+                <td className="px-4 py-3">
+                  <Badge variant="outline" className={cn("text-[9px]", 
+                    t.status === "CANCELLED" ? "bg-muted text-muted-foreground border-border" : "border-emerald-500/30 text-emerald-400"
+                  )}>{t.status}</Badge>
+                </td>
                 <td className="px-4 py-3 font-mono text-xs">{t.quantity}</td>
                 <td className="px-4 py-3 font-mono text-xs">{fmt(t.entry_price)}</td>
                 <td className="px-4 py-3 font-mono text-xs">{t.exit_price ? fmt(t.exit_price) : "—"}</td>
-                <td className={cn("px-4 py-3 font-mono text-xs font-bold", t.pnl >= 0 ? "text-emerald-400" : "text-red-400")}>
-                  {t.pnl >= 0 ? "+" : ""}{fmt(t.pnl)}
+                <td className={cn("px-4 py-3 font-mono text-xs font-bold", 
+                  t.status === "CANCELLED" ? "text-muted-foreground" : (t.pnl >= 0 ? "text-emerald-400" : "text-red-400")
+                )}>
+                  {t.status === "CANCELLED" ? "—" : (t.pnl >= 0 ? "+" : "") + fmt(t.pnl)}
                 </td>
-                <td className={cn("px-4 py-3 font-mono text-xs", t.pnl_percentage >= 0 ? "text-emerald-400" : "text-red-400")}>{fmtPct(t.pnl_percentage)}</td>
+                <td className={cn("px-4 py-3 font-mono text-xs", 
+                  t.status === "CANCELLED" ? "text-muted-foreground" : (t.pnl_percentage >= 0 ? "text-emerald-400" : "text-red-400")
+                )}>
+                  {t.status === "CANCELLED" ? "—" : fmtPct(t.pnl_percentage)}
+                </td>
                 <td className="px-4 py-3">
                   <Badge variant="outline" className={cn("text-[9px]",
-                    t.exit_reason === "TARGET_HIT" && "border-emerald-500/30 text-emerald-400",
-                    t.exit_reason === "STOP_LOSS_HIT" && "border-red-500/30 text-red-400",
+                    t.status === "CANCELLED" ? "bg-muted text-muted-foreground border-border" :
+                    t.exit_reason === "TARGET_HIT" ? "border-emerald-500/30 text-emerald-400" :
+                    t.exit_reason === "STOP_LOSS_HIT" ? "border-red-500/30 text-red-400" : ""
                   )}>{t.exit_reason || "—"}</Badge>
                 </td>
-                <td className="px-4 py-3 text-xs text-muted-foreground"><Clock className="inline h-3 w-3 mr-1" />{fmtDuration(t.duration_ms)}</td>
+                <td className="px-4 py-3 text-xs text-muted-foreground"><Clock className="inline h-3 w-3 mr-1" />{t.status === "CANCELLED" ? "—" : fmtDuration(t.duration_ms)}</td>
                 <td className="px-4 py-3 text-xs text-muted-foreground">{fmtTime(t.exit_time || t.entry_time)}</td>
               </tr>
             ))}
