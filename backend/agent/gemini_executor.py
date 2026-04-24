@@ -80,7 +80,7 @@ Be conservative. Do not force trades.
 
 === HARD RISK LIMITS (NON-NEGOTIABLE) ===
 Total Capital               : Rs.{total_capital}
-Max Loss Per Trade          : Rs.{max_loss_amount} ({max_loss_pct}% of capital)
+Max Loss Per Trade          : {max_loss_pct}% of the amount invested (Rs.{max_loss_amount} if fully deployed)
 Max Capital Per Trade       : Rs.{max_position_capital} ({max_capital_pct}% of capital)
 Min Risk:Reward Required    : {min_rr}:1
 Max Daily Loss Budget       : Rs.{max_daily_loss_amount} ({max_daily_loss_pct}% of capital)
@@ -269,7 +269,7 @@ Respond with exactly this JSON and nothing else:
     "capital_used_pct": <number>,
     "sizing_note": "<brief compact summary of which Step 5 checks passed and failed>"
   }},
-  "risk_reward": "<e.g. 1:2.3 | Below minimum>",
+  "risk_reward": "<e.g. 1:2 | Below minimum>",
   "invalidation": "<exact condition that breaks the setup>",
   "why_now_or_why_wait": "<3-5 sentences in plain English explaining whether the setup is executable now, must wait, should be avoided, or must be rejected>",
   "final_summary": "<one sentence stating the execution verdict>"
@@ -328,7 +328,7 @@ def _compute_risk_params(risk_config: dict) -> dict:
     return {
         "total_capital": round(capital, 2),
         "max_loss_pct": max_loss_pct,
-        "max_loss_amount": round(capital * max_loss_pct / 100, 2),
+        "max_loss_amount": round((capital * safe_cap_pct / 100) * max_loss_pct / 100, 2),
         "max_capital_pct": safe_cap_pct,
         "max_position_capital": round(capital * safe_cap_pct / 100, 2),
         "min_rr": min_rr,
@@ -368,6 +368,18 @@ def _compute_position_size(entry: float, stop: float, direction: str, rp: dict) 
             "max_loss_at_sl": 0.0,
             "capital_used_pct": 0.0,
             "sizing_note": "stop on wrong side of entry"
+        }
+
+    # Hard check: is the SL distance (%) > user's max loss limit?
+    sl_distance_pct = (risk_per_share / entry) * 100
+    if sl_distance_pct > rp["max_loss_pct"] + 0.001: # allow tiny float margin
+        return {
+            "position_size_shares": 0,
+            "position_size_inr": 0.0,
+            "risk_per_share": round(risk_per_share, 2),
+            "max_loss_at_sl": 0.0,
+            "capital_used_pct": 0.0,
+            "sizing_note": f"REJECTED: SL is {sl_distance_pct:.2f}%, which exceeds {rp['max_loss_pct']}% limit of invested amount"
         }
 
     max_shares_by_loss = rp["max_loss_amount"] / risk_per_share
@@ -750,6 +762,25 @@ def plan_execution(input_data: dict, risk_config: dict = None) -> dict:
     if str(agent2_view.get("decision", "NO TRADE")).upper() == "NO TRADE":
         return _blocked_execution("Agent 2 rejected the trade", rp, source="agent3_agent2_gate")
 
+    # --- LOGGING: [AGENT 3 INPUT] ---
+    print(f"==============================")
+    print(f"[AGENT 3 INPUT]")
+    print(f"==============================")
+    print(f"symbol: {symbol}")
+    print(f"direction: {agent2_view.get('direction')}")
+    print(f"ltp: {fresh_ctx.get('ltp')}")
+    print(f"vwap: {fresh_ctx.get('vwap')}")
+    print(f"structure: {fresh_ctx.get('intraday_structure')}")
+    
+    tech_view = input_data.get("technical_context", {})
+    ind_vals = tech_view.get("indicator_values", {})
+    if ind_vals:
+        print(f"\nIndicators summary:")
+        for k, v in ind_vals.items():
+            status = v.get("interpretation") if v.get("valid") else "INVALID"
+            print(f" - {k}: {v.get('latest')} ({status})")
+    print(f"==============================\n")
+
     if not _client:
         return _fallback_execution(input_data, rp)
 
@@ -882,9 +913,31 @@ def plan_execution(input_data: dict, risk_config: dict = None) -> dict:
         result["_model"] = MODEL_NAME
         result["_risk_params"] = rp
         result["_live_snapshot_used"] = input_data.get("live_execution_context", {})
+
+        # --- LOGGING: [AGENT 3 DECISION] ---
+        print(f"==============================")
+        print(f"[AGENT 3 DECISION]")
+        print(f"==============================")
+        print(f"execution_decision: {exec_dec}")
+        print(f"action: {result.get('action', 'WAIT')}")
+        print(f"confidence: {result.get('confidence', 0)}")
+        
+        if exec_dec == "ENTER NOW":
+            ps = result.get("position_sizing", {})
+            print(f"\nEntry: {entry_price}")
+            print(f"SL: {stop_price}")
+            print(f"Target: {target_price}")
+            print(f"RR: {result.get('risk_reward')}")
+            print(f"Shares: {ps.get('position_size_shares')}")
+            print(f"Max Loss: Rs.{ps.get('max_loss_at_sl')}")
+        else:
+            print(f"Reason: {result.get('why_now_or_why_wait')}")
+        print(f"==============================\n")
+
         return result
 
     except Exception as e:
+        print(f"\n[ERROR] Gemini Agent 3 failed: {e}\n")
         return _fallback_execution(input_data, rp, llm_error=str(e))
 
 
@@ -909,6 +962,15 @@ def _fallback_execution(input_data: dict, rp: dict = None, llm_error: str = "") 
 
     if decision2 == "NO TRADE":
         return _blocked_execution("fallback blocked: Agent 2 rejected the trade", rp, source="agent3_fallback_agent2")
+
+    # --- LOGGING: [FALLBACK MODE] ---
+    print(f"==============================")
+    print(f"[FALLBACK MODE]")
+    print(f"==============================")
+    print(f"reason: Gemini unavailable OR LLM error")
+    if llm_error:
+        print(f"error: {llm_error}")
+    print(f"==============================\n")
 
     ltp = _safe_float(ctx.get("ltp"), 0.0)
     vwap = _safe_float(ctx.get("vwap"), 0.0)
@@ -1041,4 +1103,44 @@ def _fallback_execution(input_data: dict, rp: dict = None, llm_error: str = "") 
     if exec_decision == "NO TRADE":
         result = _normalize_result_no_trade(result, reason_text)
 
+    # --- LOGGING: [AGENT 3 DECISION] (FALLBACK) ---
+    print(f"==============================")
+    print(f"[AGENT 3 DECISION] (FALLBACK)")
+    print(f"==============================")
+    print(f"execution_decision: {exec_decision}")
+    print(f"action: {action}")
+    print(f"confidence: {result.get('confidence', 0)}")
+    
+    if exec_decision == "ENTER NOW":
+        ps = result.get("position_sizing", {})
+        print(f"\nEntry: {entry_price}")
+        print(f"SL: {stop_price}")
+        print(f"Target: {target_price}")
+        print(f"RR: {result.get('risk_reward')}")
+        print(f"Shares: {ps.get('position_size_shares')}")
+        print(f"Max Loss: Rs.{ps.get('max_loss_at_sl')}")
+    else:
+        print(f"Reason: {reason_text}")
+    print(f"==============================\n")
+
+    return result
+
+def _blocked_execution(reason: str, rp: dict, source: str) -> dict:
+    result = {
+        "action": "AVOID",
+        "execution_decision": "NO TRADE",
+        "confidence": 0,
+        "why_now_or_why_wait": reason,
+        "_source": source,
+        "_risk_params": rp,
+    }
+    
+    # --- LOGGING: [TRADE BLOCKED] ---
+    print(f"==============================")
+    print(f"[TRADE BLOCKED]")
+    print(f"==============================")
+    print(f"Reason: {reason}")
+    print(f"Source: {source}")
+    print(f"==============================\n")
+    
     return result

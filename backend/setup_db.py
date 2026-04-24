@@ -200,6 +200,18 @@ def create_database():
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_logs_symbol ON agent_logs(symbol);
             """,
+            "indicator_data": """
+                CREATE TABLE IF NOT EXISTS indicator_data (
+                    id SERIAL PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    indicator_name TEXT NOT NULL,
+                    timeframe TEXT NOT NULL,
+                    timestamps BIGINT[],
+                    values FLOAT[],
+                    updated_at BIGINT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_indicator_data_symbol ON indicator_data(symbol);
+            """,
         }
 
         for table_name, create_sql in tables.items():

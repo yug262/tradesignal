@@ -473,14 +473,43 @@ def _fetch_raw_candles(symbol: str, interval: int, count: int = 50) -> list:
         with httpx.Client(timeout=10.0, headers=headers) as client:
             res = client.get(chart_url)
             if res.status_code == 200:
-                candles = res.json().get("candles", [])
-                return candles[-count:] if len(candles) > count else candles
+                raw_candles = res.json().get("candles", [])
+                if not raw_candles:
+                    return []
+
+                # ── Validate every candle ──
+                valid_candles = []
+                for c in raw_candles:
+                    if not isinstance(c, (list, tuple)) or len(c) < 5:
+                        continue
+                    
+                    try:
+                        # [timestamp, open, high, low, close, volume]
+                        ts, o, h, l, cl = c[0], float(c[1]), float(c[2]), float(c[3]), float(c[4])
+                        
+                        # Sanity checks
+                        if o <= 0 or h <= 0 or l <= 0 or cl <= 0:
+                            continue
+                        if h < l:
+                            continue
+                        # Basic logic: High must be >= open and >= close
+                        if h < o or h < cl:
+                            continue
+                        # Basic logic: Low must be <= open and <= close
+                        if l > o or l > cl:
+                            continue
+                            
+                        valid_candles.append(c)
+                    except (ValueError, TypeError):
+                        continue
+
+                return valid_candles[-count:] if len(valid_candles) > count else valid_candles
     except Exception as e:
         print(f"  [ERROR] Candle fetch failed for {symbol}: {e}")
     return []
 
 
-def fetch_indicator_data(db: Session, symbol: str, trade_mode: str, indicator_name: str, timeframe: str = None) -> list:
+def fetch_indicator_data(db: Session, symbol: str, trade_mode: str, indicator_name: str, timeframe: str = None, ltp: float = None) -> list:
     """
     Fetch last 20 candle data and calculate the specified TA-Lib indicator.
     
@@ -491,6 +520,7 @@ def fetch_indicator_data(db: Session, symbol: str, trade_mode: str, indicator_na
         indicator_name: TA-Lib indicator name (RSI, EMA, ATR, etc.)
         timeframe: Explicit timeframe override: '1m', '5m', '15m', '1D'
                    If None, falls back to trade_mode (DELIVERY->1D, INTRADAY->1m)
+        ltp: Live LTP for scale validation (last candle close must be within 20% of LTP)
     
     Saves the results to DBIndicatorData.
     Returns list of {timestamp, value} dicts (last 20 valid values).
@@ -522,9 +552,26 @@ def fetch_indicator_data(db: Session, symbol: str, trade_mode: str, indicator_na
     # 3. Prepare data for TA-Lib (numpy arrays)
     # Candle format: [timestamp, open, high, low, close, volume]
     try:
+        # Extract base arrays
+        closes = np.array([float(c[4]) for c in candles])
+        
+        # --- PRICE SCALE SANITY CHECK ---
+        last_close = closes[-1]
+        if ltp is not None and ltp > 0:
+            diff_pct = abs(last_close - ltp) / ltp
+            if diff_pct > 0.20:
+                print(f"\n==============================")
+                print(f"[TA-LIB REJECTED]")
+                print(f"==============================")
+                print(f"symbol: {symbol}")
+                print(f"indicator: {indicator_name} ({tf_str})")
+                print(f"reason: price scale mismatch (diff {diff_pct*100:.1f}%)")
+                print(f"last_close: {last_close} vs ltp: {ltp}")
+                print(f"==============================\n")
+                return []
+        
         highs = np.array([float(c[2]) for c in candles])
         lows = np.array([float(c[3]) for c in candles])
-        closes = np.array([float(c[4]) for c in candles])
         timestamps = [c[0] for c in candles]
     except (IndexError, ValueError) as e:
         print(f"  [ERROR] Data parsing error for {symbol}: {e}")
@@ -613,5 +660,15 @@ def fetch_indicator_data(db: Session, symbol: str, trade_mode: str, indicator_na
         print(f"  [ERROR] Database error for {symbol} array storage: {e}")
         db.rollback()
 
-    # Still return the same output format for the caller
+    # --- LOGGING: [TA-LIB OUTPUT] ---
+    print(f"==============================")
+    print(f"[TA-LIB OUTPUT]")
+    print(f"==============================")
+    print(f"symbol: {symbol}")
+    print(f"indicator: {indicator_name} ({tf_str})")
+    print(f"latest: {round(val_array[-1], 4) if val_array else 'N/A'}")
+    print(f"valid: True")
+    print(f"points: {len(val_array)}")
+    print(f"==============================\n")
+
     return [{"timestamp": ts, "value": val} for ts, val in valid_points]

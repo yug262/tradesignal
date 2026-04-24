@@ -34,14 +34,16 @@ def interpret_indicator(name: str, values: list, ltp: float = None) -> dict:
         ltp: Latest traded price (optional, used for EMA/SMA comparison)
 
     Returns:
-        Dict with: latest, trend, interpretation, detail
+        Dict with: latest, trend, interpretation, detail, valid, warning
     """
     if not values or len(values) == 0:
         return {
             "latest": None,
             "trend": "unavailable",
             "interpretation": "no data",
-            "detail": "Indicator data not available"
+            "detail": "Indicator data not available",
+            "valid": False,
+            "warning": "No data returned from TA-Lib"
         }
 
     latest = round(values[-1], 4)
@@ -52,9 +54,16 @@ def interpret_indicator(name: str, values: list, ltp: float = None) -> dict:
 
     interpretation = "neutral"
     detail = ""
+    valid = True
+    warning = None
 
     # ── RSI ──────────────────────────────────────────────────────────────
     if name_upper == "RSI":
+        # RSI must be between 0 and 100
+        if latest < 0 or latest > 100:
+            valid = False
+            warning = f"RSI value {latest} out of bounds (0-100)"
+        
         if latest > 70:
             interpretation = "overbought"
             detail = f"RSI at {latest:.1f} — overbought territory, potential exhaustion"
@@ -76,7 +85,13 @@ def interpret_indicator(name: str, values: list, ltp: float = None) -> dict:
 
     # ── EMA / SMA / WMA ─────────────────────────────────────────────────
     elif name_upper in ("EMA", "SMA", "WMA"):
+        # Moving average must be reasonably close to LTP
         if ltp is not None and latest > 0:
+            pct_diff = abs(latest - ltp) / ltp
+            if pct_diff > 0.25:
+                valid = False
+                warning = f"{name_upper} {latest} is too far from LTP {ltp} ({pct_diff*100:.1f}%)"
+            
             pct_from_ma = round(((ltp - latest) / latest) * 100, 2)
             if ltp > latest:
                 interpretation = "price_above_ma"
@@ -111,6 +126,14 @@ def interpret_indicator(name: str, values: list, ltp: float = None) -> dict:
 
     # ── ATR / NATR / TRANGE ──────────────────────────────────────────────
     elif name_upper in ("ATR", "NATR", "TRANGE"):
+        # ATR should be positive and usually < 20% of LTP
+        if latest <= 0:
+            valid = False
+            warning = f"{name_upper} must be positive, got {latest}"
+        elif ltp is not None and latest > (ltp * 0.20):
+             valid = False
+             warning = f"{name_upper} {latest} is unusually high (>20% of LTP)"
+
         if trend == "rising":
             interpretation = "volatility_expanding"
             detail = f"{name_upper} at {latest:.2f} — volatility expanding"
@@ -123,7 +146,13 @@ def interpret_indicator(name: str, values: list, ltp: float = None) -> dict:
 
     # ── BBANDS (middle band) ─────────────────────────────────────────────
     elif name_upper == "BBANDS":
+        # BBANDS middle should be near LTP
         if ltp is not None and latest > 0:
+            pct_diff = abs(latest - ltp) / ltp
+            if pct_diff > 0.25:
+                valid = False
+                warning = f"BBANDS {latest} is too far from LTP {ltp}"
+
             if ltp > latest:
                 interpretation = "above_middle_band"
                 detail = f"LTP Rs.{ltp:.2f} above Bollinger middle band {latest:.2f}"
@@ -135,7 +164,7 @@ def interpret_indicator(name: str, values: list, ltp: float = None) -> dict:
                 detail = f"LTP at Bollinger middle band {latest:.2f}"
         else:
             interpretation = "available_but_limited"
-            detail = f"Bollinger middle band at {latest:.2f} — no LTP for comparison"
+            detail = f"Bollinger middle band at {latest:.2f}"
 
     # ── CCI ──────────────────────────────────────────────────────────────
     elif name_upper == "CCI":
@@ -178,8 +207,10 @@ def interpret_indicator(name: str, values: list, ltp: float = None) -> dict:
     return {
         "latest": latest,
         "trend": trend,
-        "interpretation": interpretation,
+        "interpretation": interpretation if valid else "unavailable",
         "detail": detail,
+        "valid": valid,
+        "warning": warning
     }
 
 
@@ -251,67 +282,98 @@ def build_technical_context(
 
     print(f"\n   [TECH CONTEXT] Building technical context for {symbol} ({len(indicators_to_process)} indicators)...")
 
+    # Step 1: Process each requested indicator
     for req in indicators_to_process:
         ind_name = str(req.get("name", "")).upper().strip()
         ind_tf = str(req.get("timeframe", "")).strip()
         ind_reason = str(req.get("reason", "")).strip()
-
-        if not ind_name:
-            continue
-
         key = f"{ind_name}_{ind_tf}" if ind_tf else ind_name
 
         try:
-            # Fetch indicator data via TA-Lib
+            # A. Fetch raw indicator data (with price-scale check)
             raw_data = fetch_indicator_data(
                 db=db,
                 symbol=symbol,
                 trade_mode=trade_mode,
                 indicator_name=ind_name,
                 timeframe=ind_tf if ind_tf else None,
+                ltp=ltp
             )
 
             if not raw_data:
                 indicator_values[key] = {
                     "latest": None,
                     "last_20": [],
-                    "interpretation": "no data available",
-                    "detail": f"Could not fetch {ind_name} for {ind_tf}",
+                    "interpretation": "unavailable",
+                    "detail": f"No valid data returned for {ind_name}",
+                    "valid": False,
                     "reason_requested": ind_reason,
                 }
-                technical_warnings.append(f"{key}: data unavailable")
+                technical_warnings.append(f"{key}: data unavailable or failed price-scale check")
                 continue
 
-            # Extract values list
-            vals = [point["value"] for point in raw_data if "value" in point]
-
-            # Interpret
+            # B. Extract values and interpret
+            vals = [point["value"] for point in raw_data]
             interp = interpret_indicator(ind_name, vals, ltp=ltp)
 
+            # C. Store structured output
             indicator_values[key] = {
                 "latest": interp["latest"],
                 "last_20": [round(v, 4) for v in vals[-20:]],
                 "interpretation": interp["interpretation"],
-                "trend": interp.get("trend", "unknown"),
+                "trend": interp["trend"],
                 "detail": interp["detail"],
+                "valid": interp["valid"],
+                "warning": interp["warning"],
                 "reason_requested": ind_reason,
             }
 
-            # Generate warnings/confirmations from interpretation
-            _classify_signal(key, interp, technical_warnings, technical_confirmations)
-
-            print(f"      [{key}] latest={interp['latest']} | {interp['interpretation']} | {interp.get('trend', 'n/a')}")
+            # D. Classify into global confirmations/warnings (ONLY if valid)
+            if interp["valid"]:
+                _classify_signal(key, interp, technical_warnings, technical_confirmations)
+                print(f"      [{key}] latest={interp['latest']} | {interp['interpretation']} | {interp['trend']}")
+            else:
+                technical_warnings.append(f"{key}: {interp['warning']}")
+                # print(f"      [{key}] INVALID: {interp['warning']}") # Replaced by summary
 
         except Exception as e:
-            print(f"      [WARN] Failed to process indicator {key}: {e}")
+            print(f"\n==============================")
+            print(f"[ERROR]")
+            print(f"==============================")
+            print(f"stage: Technical Context / {req.get('name')}")
+            print(f"error: {str(e)}")
+            print(f"==============================\n")
+            
             indicator_values[key] = {
                 "latest": None,
                 "last_20": [],
                 "interpretation": "error",
                 "detail": f"Processing error: {str(e)}",
+                "valid": False,
                 "reason_requested": ind_reason,
             }
-            technical_warnings.append(f"{key}: processing error — {str(e)}")
+            technical_warnings.append(f"{key}: processing error")
+
+    # --- LOGGING: [TECHNICAL CONTEXT] ---
+    print(f"==============================")
+    print(f"[TECHNICAL CONTEXT]")
+    print(f"==============================")
+    for k, v in indicator_values.items():
+        if v.get("valid"):
+            print(f"{k} -> {v.get('latest')} ({v.get('interpretation')})")
+        else:
+            print(f"{k} -> INVALID ({v.get('interpretation')})")
+            
+    if technical_confirmations:
+        print(f"\nConfirmations:")
+        for c in technical_confirmations:
+            print(f" - {c}")
+    
+    if technical_warnings:
+        print(f"\nWarnings:")
+        for w in technical_warnings:
+            print(f" - {w}")
+    print(f"==============================\n")
 
     return {
         "requested_by_agent2": indicators_to_process,

@@ -68,11 +68,10 @@ def _log_action(db: Session, agent_name: str, symbol: str, signal: str,
 def get_or_create_portfolio(db: Session) -> db_models.DBPortfolio:
     """Get existing portfolio or create with defaults from system_config."""
     portfolio = db.query(db_models.DBPortfolio).first()
-    if not portfolio:
-        # Seed from system_config capital
-        cfg = db.query(db_models.DBSystemConfig).first()
-        initial_capital = cfg.capital if cfg else 100000.0
+    cfg = db.query(db_models.DBSystemConfig).first()
+    initial_capital = cfg.capital if cfg else 100000.0
 
+    if not portfolio:
         portfolio = db_models.DBPortfolio(
             total_capital=initial_capital,
             available_cash=initial_capital,
@@ -93,6 +92,13 @@ def get_or_create_portfolio(db: Session) -> db_models.DBPortfolio:
         db.add(portfolio)
         db.commit()
         db.refresh(portfolio)
+    elif portfolio.total_capital != initial_capital:
+        # SYNC: If user updated capital in settings, sync it to portfolio
+        # This will allow available_cash to be recalculated correctly next
+        portfolio.total_capital = initial_capital
+        db.commit()
+        db.refresh(portfolio)
+
     return portfolio
 
 
