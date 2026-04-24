@@ -15,6 +15,7 @@ import db_models
 from database import SessionLocal
 from agent.data_collector import fetch_stock_data_for_symbols
 from agent.gemini_executor import plan_execution
+from services.indicator_service import build_technical_context
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -229,6 +230,36 @@ def run_execution_planner(db: Session = None) -> dict:
                 "agent2_view": agent2_input_view,
                 "live_execution_context": live_execution_context
             }
+
+            # ── Build technical_context from Agent 2's requested_indicators ──
+            requested_indicators = agent2_view.get("requested_indicators", [])
+            if requested_indicators and isinstance(requested_indicators, list):
+                try:
+                    technical_context = build_technical_context(
+                        db=db,
+                        symbol=sig.symbol,
+                        trade_mode=agent2_view.get("trade_mode", sig.trade_mode or "INTRADAY"),
+                        requested_indicators=requested_indicators,
+                        ltp=ltp,
+                    )
+                    agent3_input["technical_context"] = technical_context
+                    print(f"      [TECH] {sig.symbol}: {len(technical_context.get('indicator_values', {}))} indicators computed")
+                except Exception as e:
+                    print(f"      [WARN] {sig.symbol}: technical_context build failed: {e}")
+                    agent3_input["technical_context"] = {
+                        "requested_by_agent2": requested_indicators,
+                        "indicator_values": {},
+                        "technical_warnings": [f"Technical context build failed: {str(e)}"],
+                        "technical_confirmations": [],
+                    }
+            else:
+                agent3_input["technical_context"] = {
+                    "requested_by_agent2": [],
+                    "indicator_values": {},
+                    "technical_warnings": [],
+                    "technical_confirmations": [],
+                }
+
             tasks.append((sig, agent3_input))
 
         # Persist skipped signals before moving to Gemini calls

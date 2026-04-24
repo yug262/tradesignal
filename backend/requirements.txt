@@ -8,3 +8,5 @@ python-dotenv==1.0.1
 google-genai>=1.0.0
 apscheduler>=3.10.0
 pytz>=2024.1
+TA-Lib>=0.4.24
+numpy>=2.0.0

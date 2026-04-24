@@ -130,6 +130,24 @@ Rules:
 - Do not reinterpret a rejected setup as conditional.
 - Do not rescue a dead trade.
 
+STEP 1.5 — TECHNICAL INDICATORS (EXECUTION SUPPORT ONLY)
+If technical_context is provided in the input, review it as supplementary execution intelligence:
+- indicator_values: TA-Lib computed values requested by Agent 2 (RSI, EMA, ATR, MACD, etc.)
+- technical_warnings: automated flags from indicator interpretation
+- technical_confirmations: automated confirmations from indicator interpretation
+
+Use indicators ONLY to:
+- Confirm or flag exhaustion (e.g., RSI overbought = caution for long entry)
+- Confirm trend alignment (e.g., price above rising EMA = supportive)
+- Estimate volatility for stop placement (e.g., ATR expanding = wider stop needed)
+- Avoid chasing (e.g., RSI extreme + stretched price = AVOID CHASE)
+
+Indicators must NOT:
+- Override Agent 2 decision (if Agent 2 = NO TRADE, indicators are irrelevant)
+- Override hard risk limits or RR validation
+- Create a trade on their own — they are supporting evidence only
+- Replace structural analysis of price location
+
 STEP 2 — PRICE LOCATION AND STRUCTURE
 Evaluate current execution context using:
 - ltp

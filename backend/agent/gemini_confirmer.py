@@ -173,7 +173,14 @@ Respond with this exact JSON structure:
     "condition that would clearly break the thesis",
     "another condition if relevant"
   ],
-  "final_summary": "One sharp sentence summarizing whether the opportunity is still alive or already gone"
+  "final_summary": "One sharp sentence summarizing whether the opportunity is still alive or already gone",
+  "requested_indicators": [
+    {{
+      "name": "RSI | SMA | EMA | MACD | BBANDS | ATR | CCI | WILLR",
+      "timeframe": "1m | 5m | 15m | 1D",
+      "reason": "why Agent 3 needs this indicator for execution validation"
+    }}
+  ]
 }}
 
 === OUTPUT RULES ===
@@ -182,7 +189,20 @@ Respond with this exact JSON structure:
 - If opening_move_quality is REVERSING or FADING, be very conservative.
 - A large gap can confirm the thesis and still leave NO TRADE if most edge looks already absorbed.
 - Do not use dramatic language.
-- Do not overstate confidence."""
+- Do not overstate confidence.
+
+=== REQUESTED INDICATORS RULES ===
+- If decision = TRADE, you MUST request 1-4 indicators for Agent 3 execution validation.
+- If decision = NO TRADE, requested_indicators MUST be an empty list [].
+- Maximum 4 indicators.
+- Indicators are used ONLY by Agent 3 for execution safety checks (exhaustion, trend alignment, volatility estimation). Do NOT use indicators to re-analyze the news.
+- If trade_mode = INTRADAY, prefer timeframes: 1m, 5m.
+- If trade_mode = DELIVERY, prefer timeframe: 1D.
+- Choose from: RSI, SMA, EMA, MACD, BBANDS, ATR, CCI, WILLR.
+- Each indicator must have a clear reason explaining why Agent 3 needs it.
+- Suggested defaults:
+  INTRADAY: RSI 1m/5m (exhaustion check), EMA 5m (trend alignment), ATR 5m (volatility for stop placement)
+  DELIVERY: RSI 1D (daily exhaustion), EMA 1D (broader trend), MACD 1D (momentum confirmation), ATR 1D (daily volatility)"""
 
 
 def confirm_signal_v2(
@@ -420,6 +440,22 @@ def _fallback_confirmation_v2(input_data: dict) -> dict:
 
     confidence = max(20, min(85, a1_confidence // 2 + (15 if decision == "TRADE" else 0)))
 
+    # Build requested_indicators based on trade_mode (only if TRADE)
+    requested_indicators = []
+    if decision == "TRADE":
+        if trade_mode == "INTRADAY":
+            requested_indicators = [
+                {"name": "RSI", "timeframe": "1m", "reason": "Check short-term exhaustion before execution"},
+                {"name": "EMA", "timeframe": "1m", "reason": "Check immediate trend alignment"},
+                {"name": "ATR", "timeframe": "1m", "reason": "Estimate current volatility for stop placement"},
+            ]
+        elif trade_mode == "DELIVERY":
+            requested_indicators = [
+                {"name": "RSI", "timeframe": "1D", "reason": "Check daily exhaustion"},
+                {"name": "EMA", "timeframe": "1D", "reason": "Check broader trend"},
+                {"name": "MACD", "timeframe": "1D", "reason": "Check momentum confirmation"},
+            ]
+
     return {
         "decision": decision,
         "trade_mode": trade_mode,
@@ -433,6 +469,7 @@ def _fallback_confirmation_v2(input_data: dict) -> dict:
         "warning_flags": warning_flags[:3] or ["Fallback mode only — Gemini confirmation unavailable"],
         "invalid_if": invalid_if[:3] or ["If price action stops confirming the thesis"],
         "final_summary": f"{decision}: {why}",
+        "requested_indicators": requested_indicators,
         "_source": "agent2_fallback",
         "_model": "rule_engine_only",
     }

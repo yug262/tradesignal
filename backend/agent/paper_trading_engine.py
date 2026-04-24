@@ -109,31 +109,37 @@ def update_portfolio_stats(db: Session):
     portfolio = get_or_create_portfolio(db)
     _refresh_daily_pnl(portfolio)
 
-    # Sync total_capital from system_config (Settings)
-    cfg = db.query(db_models.DBSystemConfig).first()
-    if cfg:
-        portfolio.total_capital = cfg.capital
-
     # Count trades
     open_trades = db.query(db_models.DBPaperTrade).filter(
-        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"])
+        db_models.DBPaperTrade.status == "OPEN"
+    ).all()
+
+    pending_trades = db.query(db_models.DBPaperTrade).filter(
+        db_models.DBPaperTrade.status == "PENDING"
     ).all()
 
     closed_trades = db.query(db_models.DBPaperTrade).filter(
         db_models.DBPaperTrade.status == "CLOSED"
     ).all()
 
-    # Calculate used cash (sum of open position values)
+    # Calculate used cash (sum of open and pending position values)
     used_cash = sum(t.position_value for t in open_trades)
+    reserved_cash = sum(t.position_value for t in pending_trades)
 
     # Calculate total P&L from closed trades
     total_pnl = sum(t.pnl for t in closed_trades)
     total_profit = sum(t.pnl for t in closed_trades if t.pnl > 0)
     total_loss = sum(t.pnl for t in closed_trades if t.pnl < 0)
 
+    # Win rate strictly from executed trades
     winning = sum(1 for t in closed_trades if t.pnl > 0)
     losing = sum(1 for t in closed_trades if t.pnl <= 0)
-    total_closed = len(closed_trades)
+    total_executed = winning + losing
+
+    # All completed (Closed + Cancelled)
+    cancelled_count = db.query(db_models.DBPaperTrade).filter(
+        db_models.DBPaperTrade.status == "CANCELLED"
+    ).count()
 
     # Today's closed trades P&L
     today = _market_date_str()
@@ -145,19 +151,18 @@ def update_portfolio_stats(db: Session):
     todays_closed_pnl = sum(t.pnl for t in todays_closed)
 
     # Calculate unrealized P&L from open trades
-    unrealized_pnl = sum(t.pnl for t in open_trades if t.status == "OPEN")
+    unrealized_pnl = sum(t.pnl for t in open_trades)
 
-    # Total equity is now the capital from settings
-    # available cash = current capital - currently used in open positions
-    portfolio.available_cash = round(portfolio.total_capital - used_cash, 2)
-    portfolio.used_cash = round(used_cash, 2)
+    # Available cash = initial capital + total P&L from closed - (used + reserved)
+    portfolio.available_cash = portfolio.total_capital + total_pnl - (used_cash + reserved_cash)
+    portfolio.used_cash = round(used_cash + reserved_cash, 2)
     portfolio.total_profit = round(total_profit, 2)
     portfolio.total_loss = round(total_loss, 2)
     portfolio.total_pnl = round(total_pnl + unrealized_pnl, 2)
-    portfolio.win_rate = round((winning / total_closed * 100), 2) if total_closed > 0 else 0.0
-    portfolio.total_trades = len(open_trades) + total_closed
-    portfolio.open_trades = len(open_trades)
-    portfolio.closed_trades = total_closed
+    portfolio.win_rate = round((winning / total_executed * 100), 2) if total_executed > 0 else 0.0
+    portfolio.total_trades = len(open_trades) + len(pending_trades) + total_executed + cancelled_count
+    portfolio.open_trades = len(open_trades) + len(pending_trades)
+    portfolio.closed_trades = total_executed + cancelled_count
     portfolio.winning_trades = winning
     portfolio.losing_trades = losing
     portfolio.todays_pnl = round(todays_closed_pnl + unrealized_pnl, 2)
@@ -204,6 +209,36 @@ def create_paper_trade(
         return {
             "success": False,
             "error": f"Insufficient cash. Need Rs.{position_value:,.2f} but only Rs.{portfolio.available_cash:,.2f} available."
+        }
+
+    # ── Portfolio Rules Check ──
+    cfg = db.query(db_models.DBSystemConfig).first()
+    
+    # 1. Max Open Positions
+    max_open = cfg.max_open_positions if cfg else 5
+    current_open = db.query(db_models.DBPaperTrade).filter(
+        db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"])
+    ).count()
+    if current_open >= max_open:
+        return {
+            "success": False,
+            "error": f"Risk Limit: Max {max_open} open/pending positions allowed."
+        }
+
+    # 2. Max Daily Loss
+    max_loss_pct = cfg.max_daily_loss_pct if cfg else 3.0
+    if portfolio.todays_pnl < -(portfolio.total_capital * max_loss_pct / 100):
+        return {
+            "success": False,
+            "error": f"Risk Limit: Daily loss limit ({max_loss_pct}%) reached. Trading suspended for today."
+        }
+
+    # 3. Market Time Rule (No new trades after 15:10 for intraday)
+    now_ist = datetime.now(IST)
+    if trade_mode == "INTRADAY" and (now_ist.hour > 15 or (now_ist.hour == 15 and now_ist.minute >= 10)):
+         return {
+            "success": False,
+            "error": "Risk Limit: No new intraday trades allowed after 15:10 IST."
         }
 
     # Check for duplicate (same symbol + signal_id already open)
@@ -265,14 +300,7 @@ def create_paper_trade(
     update_portfolio_stats(db)
     db.commit()
 
-    print(f"\n{'='*50}")
-    print(f" [AUTOMATION: PAPER TRADE CREATED]")
-    print(f"   Trade ID:  {trade_id}")
-    print(f"   Action:    {action} {quantity}x {symbol}")
-    print(f"   Entry:     Rs.{entry_price:.2f}")
-    print(f"   Targets:   SL Rs.{stop_loss:.2f} | TGT Rs.{target_price:.2f}")
-    print(f"   Reason:    {trade_reason}")
-    print(f"{'='*50}\n")
+    print(f"  [PAPER TRADE] CREATED: {trade_id} | {action} {quantity}x {symbol} @ Rs.{entry_price:.2f}")
 
     return {
         "success": True,
@@ -295,29 +323,44 @@ def close_paper_trade(
     exit_price: float,
     exit_reason: str = "MANUAL_EXIT",
 ) -> dict:
-    """Close an open paper trade and calculate P&L.
+    """Close an open paper trade and calculate P&L."""
 
-    Includes concurrency guard: if the trade was already closed by another
-    monitor loop (15s paper monitor vs 30s risk monitor), returns early
-    without double-applying PnL.
-    """
-
-    # ── Concurrency guard: re-query with status='OPEN' filter ────────────
-    # This prevents double-close if both the paper monitor (15s) and
-    # risk monitor (30s) try to close the same trade simultaneously.
     trade = db.query(db_models.DBPaperTrade).filter(
         db_models.DBPaperTrade.id == trade_id,
         db_models.DBPaperTrade.status.in_(["OPEN", "PENDING"]),
     ).first()
 
     if not trade:
-        # Trade was already closed by the other monitor — safe to skip
-        print(f"  [PAPER TRADE] SKIP CLOSE: {trade_id} — already closed or not found")
-        return {"success": False, "error": f"No open trade found with id {trade_id} (likely already closed)"}
+        return {"success": False, "error": f"No open trade found with id {trade_id}"}
 
     now = _now_ms()
 
-    # Calculate P&L
+    # Handle PENDING trades (Cancellation vs Closing)
+    if trade.status == "PENDING":
+        trade.exit_price = None
+        trade.current_price = None
+        trade.pnl = 0.0
+        trade.pnl_percentage = 0.0
+        trade.status = "CANCELLED"
+        trade.exit_reason = f"UNFILLED_{exit_reason}"
+        trade.exit_time = now
+        trade.updated_at = now
+
+        _log_action(
+            db, "PAPER_TRADING", trade.symbol, "ORDER_CANCELLED",
+            f"Pending order for {trade.symbol} cancelled/expired. Reason: {exit_reason}",
+            trade_id=trade_id
+        )
+        update_portfolio_stats(db)
+        db.commit()
+        return {
+            "success": True,
+            "trade_id": trade_id,
+            "status": "CANCELLED",
+            "pnl": 0.0
+        }
+
+    # Calculate P&L for OPEN trades
     if trade.action == "BUY":
         pnl = (exit_price - trade.entry_price) * trade.quantity
     else:
@@ -340,8 +383,6 @@ def close_paper_trade(
         "STOP_LOSS_HIT": "STOP_LOSS_TRIGGERED",
         "AGENT_SELL_SIGNAL": "AGENT_SELL",
         "MANUAL_EXIT": "MANUAL_EXIT",
-        "RISK_MONITOR_EXIT": "RISK_MONITOR_EXIT",
-        "TIME_SQUARE_OFF": "TIME_SQUARE_OFF",
     }.get(exit_reason, exit_reason)
 
     pnl_str = f"+Rs.{pnl:.2f}" if pnl >= 0 else f"-Rs.{abs(pnl):.2f}"
@@ -353,36 +394,11 @@ def close_paper_trade(
                  "pnl_percentage": round(pnl_pct, 2), "exit_reason": exit_reason}
     )
 
-    # ── Sync parent DBTradeSignal ────────────────────────────────────────
-    # When a paper trade closes, the originating signal must reflect
-    # the final state so dashboards and analytics stay accurate.
-    if trade.signal_id:
-        sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
-        if sig:
-            sig.status = "closed"
-            sig.risk_monitor_status = exit_reason
-            sig.risk_last_checked_at = now
-
-    # ── Update Global Settings Capital ───────────────────────────────────
-    # This 'connects' paper trading to the Settings page.
-    # Agent 3 uses DBSystemConfig.capital for position sizing, so wins/losses
-    # now automatically affect future trade sizing.
-    cfg = db.query(db_models.DBSystemConfig).first()
-    if cfg:
-        cfg.capital = round(cfg.capital + pnl, 2)
-
     # Update portfolio
     update_portfolio_stats(db)
     db.commit()
 
-    print(f"\n{'='*50}")
-    print(f" [AUTOMATION: PAPER TRADE CLOSED]")
-    print(f"   Trade ID:  {trade_id}")
-    print(f"   Symbol:    {trade.symbol}")
-    print(f"   Reason:    {exit_reason}")
-    print(f"   Exit:      Rs.{exit_price:.2f}")
-    print(f"   P&L:       {pnl_str} ({pnl_pct:+.2f}%)")
-    print(f"{'='*50}\n")
+    print(f"  [PAPER TRADE] CLOSED: {trade_id} | {exit_reason} | P&L: {pnl_str}")
 
     return {
         "success": True,
@@ -634,9 +650,9 @@ def get_open_positions(db: Session) -> list[dict]:
 
 
 def get_closed_positions(db: Session, limit: int = 50) -> list[dict]:
-    """Get closed paper trades, most recent first."""
+    """Get closed and cancelled paper trades, most recent first."""
     trades = db.query(db_models.DBPaperTrade).filter(
-        db_models.DBPaperTrade.status == "CLOSED"
+        db_models.DBPaperTrade.status.in_(["CLOSED", "CANCELLED"])
     ).order_by(db_models.DBPaperTrade.exit_time.desc()).limit(limit).all()
 
     return [_trade_to_dict(t) for t in trades]

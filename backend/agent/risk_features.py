@@ -78,7 +78,8 @@ def fetch_intraday_candles(symbol: str, interval_minutes: int = 5) -> list:
 def fetch_market_depth(symbol: str) -> dict:
     """Fetch market depth (buy/sell order book) from Groww.
 
-    Returns dict with total_buy_qty, total_sell_qty, imbalance_ratio.
+    Returns dict with total_buy_qty, total_sell_qty, imbalance_ratio,
+    pressure_state, and absorption flags.
     """
     clean = symbol.replace(".NS", "").strip().upper()
     headers = {
@@ -93,20 +94,67 @@ def fetch_market_depth(symbol: str) -> dict:
             res = client.get(depth_url)
             if res.status_code == 200:
                 data = res.json()
-                # Groww live data sometimes includes depth in the same payload
                 total_buy = data.get("totalBuyQty", 0) or 0
                 total_sell = data.get("totalSellQty", 0) or 0
-                return {
-                    "total_buy_qty": total_buy,
-                    "total_sell_qty": total_sell,
-                    "imbalance_ratio": (
-                        round(total_buy / total_sell, 3)
-                        if total_sell > 0 else 999.0
-                    ),
-                }
+                return _analyze_depth(total_buy, total_sell)
     except Exception:
         pass
-    return {"total_buy_qty": 0, "total_sell_qty": 0, "imbalance_ratio": 1.0}
+    return _empty_depth()
+
+
+def _analyze_depth(total_buy: int, total_sell: int) -> dict:
+    """Compute depth analytics from raw buy/sell quantities."""
+    if total_sell > 0:
+        imbalance_ratio = round(total_buy / total_sell, 3)
+    else:
+        imbalance_ratio = 999.0 if total_buy > 0 else 1.0
+
+    # Pressure classification
+    if imbalance_ratio > 3.0:
+        pressure_state = "heavy_buy_pressure"
+    elif imbalance_ratio > 1.8:
+        pressure_state = "moderate_buy_pressure"
+    elif imbalance_ratio < 0.33:
+        pressure_state = "heavy_sell_pressure"
+    elif imbalance_ratio < 0.55:
+        pressure_state = "moderate_sell_pressure"
+    else:
+        pressure_state = "balanced"
+
+    # Absorption detection: large one-sided volume sitting in the book
+    # without price moving much suggests institutional absorption
+    total_depth = total_buy + total_sell
+    absorption_buy = False
+    absorption_sell = False
+    if total_depth > 0:
+        buy_pct = total_buy / total_depth
+        sell_pct = total_sell / total_depth
+        # If >75% of depth is on one side, that side may be absorbing
+        if buy_pct > 0.75:
+            absorption_buy = True
+        if sell_pct > 0.75:
+            absorption_sell = True
+
+    return {
+        "total_buy_qty": total_buy,
+        "total_sell_qty": total_sell,
+        "imbalance_ratio": imbalance_ratio,
+        "pressure_state": pressure_state,
+        "absorption_buy": absorption_buy,
+        "absorption_sell": absorption_sell,
+    }
+
+
+def _empty_depth() -> dict:
+    """Return default empty depth when data is unavailable."""
+    return {
+        "total_buy_qty": 0,
+        "total_sell_qty": 0,
+        "imbalance_ratio": 1.0,
+        "pressure_state": "unknown",
+        "absorption_buy": False,
+        "absorption_sell": False,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -284,6 +332,19 @@ def extract_risk_features(
                 else:
                     structure_state = "neutral"
 
+    # ── Depth-derived features ─────────────────────────────────────────────
+    depth_pressure = depth.get("pressure_state", "unknown") if isinstance(depth, dict) else "unknown"
+    depth_imbalance = depth.get("imbalance_ratio", 1.0) if isinstance(depth, dict) else 1.0
+    absorption_buy = depth.get("absorption_buy", False) if isinstance(depth, dict) else False
+    absorption_sell = depth.get("absorption_sell", False) if isinstance(depth, dict) else False
+
+    # Depth against position = sell pressure for longs, buy pressure for shorts
+    depth_against_position = False
+    if is_long and depth_pressure in ("heavy_sell_pressure", "moderate_sell_pressure"):
+        depth_against_position = True
+    elif not is_long and depth_pressure in ("heavy_buy_pressure", "moderate_buy_pressure"):
+        depth_against_position = True
+
     # ── Build final feature dict ─────────────────────────────────────────
     return {
         # Identity
@@ -330,6 +391,13 @@ def extract_risk_features(
         "structure_state": structure_state,
         "recent_swing_high": recent_swing_high,
         "recent_swing_low": recent_swing_low,
+
+        # Market Depth
+        "depth_pressure": depth_pressure,
+        "depth_imbalance": depth_imbalance,
+        "depth_absorption_buy": absorption_buy,
+        "depth_absorption_sell": absorption_sell,
+        "depth_against_position": depth_against_position,
     }
 
 

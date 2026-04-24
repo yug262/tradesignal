@@ -1,18 +1,18 @@
-"""Risk Monitor Agent (Agent 4) — Post-entry live trade protection engine.
+"""Risk Monitor Agent (Agent 4) — Agent-led live trade protection engine.
 
 This is the main orchestrator for the live risk monitoring system.
-It continuously evaluates every open trade and produces
-HOLD / TIGHTEN_STOPLOSS / PARTIAL_EXIT / EXIT_NOW decisions.
+It evaluates every open trade using an LLM-powered risk agent,
+validates the output through guardrails, and persists the decision.
 
-NO Gemini/LLM in the execution path.
-NO scoring engine. NO weighted buckets.
-Pure deterministic rule engine.
+Architecture:
+  Live Data → Feature Extraction → Risk Agent (LLM) → Validator → Persist → Log
 
-Pipeline for each monitored trade:
-  1. Fetch live quote + intraday candles + market depth
-  2. Extract minimal risk features (risk_features.py)
-  3. Run strict priority rule engine (risk_rules.py)
-  4. Log decision + persist to DB (updates SL, or closes trade)
+Fallback hierarchy:
+  1. LLM agent produces a judgment
+  2. Validator sanitizes and enforces safety rules
+  3. If LLM fails entirely, deterministic rule engine runs as backup
+  4. Validator still runs on rule engine output (same safety guarantees)
+  5. Hard overrides always fire regardless of decision source
 
 Integration points:
   - Reads from: DBPaperTrade where status='OPEN'
@@ -36,7 +36,12 @@ from agent.risk_features import (
     fetch_intraday_candles,
     fetch_market_depth,
 )
-from agent.risk_rules import evaluate_trade
+from agent.gemini_risk_monitor import (
+    evaluate_risk_with_llm,
+    is_agent_available,
+)
+from agent.risk_agent_validator import validate_agent_output
+from agent.risk_rules import evaluate_trade as evaluate_trade_deterministic
 from agent.paper_trading_engine import close_paper_trade
 
 logger = logging.getLogger("risk_monitor")
@@ -45,6 +50,94 @@ IST = timezone(timedelta(hours=5, minutes=30))
 
 # Minimum interval between checks for the same trade (seconds)
 MIN_CHECK_INTERVAL_SECONDS = 25
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# DECISION MEMORY — tracks last decision per trade for flip-flop detection
+# ═══════════════════════════════════════════════════════════════════════════════
+
+# In-memory cache: trade_id -> { decision, timestamp_ms, validated_result }
+_decision_memory: dict[str, dict] = {}
+
+# Flip-flop thresholds
+FLIP_FLOP_WINDOW_MS = 120_000       # 2 minutes — if decision reverses within this window
+FLIP_FLOP_MAX_REVERSALS = 3         # Max allowed reversals before flagging
+
+# Aggressive decision pairs that constitute a "flip-flop"
+_FLIP_PAIRS = {
+    ("EXIT_NOW", "HOLD"),
+    ("HOLD", "EXIT_NOW"),
+    ("PARTIAL_EXIT", "HOLD"),
+    ("HOLD", "PARTIAL_EXIT"),
+    ("EXIT_NOW", "TIGHTEN_STOPLOSS"),
+    ("TIGHTEN_STOPLOSS", "EXIT_NOW"),
+}
+
+
+def _record_decision(trade_id: str, validated_result: dict):
+    """Store the latest decision for a trade in memory."""
+    now_ms = _now_ms()
+    entry = _decision_memory.get(trade_id)
+
+    reversals = 0
+    if entry:
+        old_decision = entry.get("decision", "HOLD")
+        new_decision = validated_result.get("decision", "HOLD")
+        old_reversals = entry.get("reversals", 0)
+        old_ts = entry.get("timestamp_ms", 0)
+
+        # Check if this is a flip-flop (aggressive reversal within the window)
+        if (old_decision, new_decision) in _FLIP_PAIRS:
+            if (now_ms - old_ts) < FLIP_FLOP_WINDOW_MS:
+                reversals = old_reversals + 1
+            else:
+                reversals = 0
+
+    _decision_memory[trade_id] = {
+        "decision": validated_result.get("decision", "HOLD"),
+        "timestamp_ms": now_ms,
+        "validated_result": validated_result,
+        "reversals": reversals,
+    }
+
+
+def _get_previous_state(trade_id: str) -> dict | None:
+    """Get the previous validated result for a trade, if available."""
+    entry = _decision_memory.get(trade_id)
+    if entry:
+        return entry.get("validated_result")
+    return None
+
+
+def _check_flip_flop(trade_id: str, validated_result: dict) -> list[str]:
+    """Check if the new decision constitutes a flip-flop.
+
+    Returns a list of risk flags to append if flip-flopping is detected.
+    """
+    flags = []
+    entry = _decision_memory.get(trade_id)
+    if not entry:
+        return flags
+
+    old_decision = entry.get("decision", "HOLD")
+    new_decision = validated_result.get("decision", "HOLD")
+    reversals = entry.get("reversals", 0)
+    old_ts = entry.get("timestamp_ms", 0)
+    now_ms = _now_ms()
+
+    if (old_decision, new_decision) in _FLIP_PAIRS:
+        elapsed_sec = (now_ms - old_ts) / 1000
+        if elapsed_sec < (FLIP_FLOP_WINDOW_MS / 1000):
+            flags.append(f"flip_flop:{old_decision}->{new_decision}")
+
+            if reversals >= FLIP_FLOP_MAX_REVERSALS:
+                flags.append("flip_flop_excessive")
+                logger.warning(
+                    f"{trade_id}: Excessive flip-flopping detected "
+                    f"({reversals} reversals in {elapsed_sec:.0f}s). "
+                    f"Latest: {old_decision} -> {new_decision}"
+                )
+
+    return flags
 
 
 def _now_ms() -> int:
@@ -64,7 +157,14 @@ def _market_is_open() -> bool:
 # STRUCTURED LOGGING
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _log_decision(trade_id: str, symbol: str, features: dict, result: dict, old_sl: float):
+def _log_decision(
+    trade_id: str,
+    symbol: str,
+    features: dict,
+    result: dict,
+    old_sl: float,
+    decision_source: str,
+):
     """Log every risk decision in a structured format."""
     new_sl = result.get("updated_stop_loss")
     decision = result.get("decision", "HOLD")
@@ -77,22 +177,40 @@ def _log_decision(trade_id: str, symbol: str, features: dict, result: dict, old_
     mfe_pct = features.get("mfe_pct", 0)
     mae_pct = features.get("mae_pct", 0)
     time_in_trade = features.get("time_in_trade_seconds", 0)
-    triggered = result.get("triggered_rules", [])
+    confidence = result.get("confidence", 0)
+    thesis = result.get("thesis_status", "unknown")
+    urgency = result.get("urgency", "unknown")
+    validation_status = result.get("_validation_status", "unknown")
+    overrides = result.get("_overrides_applied", [])
+    triggered = result.get("triggered_factors", result.get("triggered_rules", []))
 
     mins = int(time_in_trade // 60)
     sl_change = f"₹{old_sl:.2f} -> ₹{new_sl:.2f}" if new_sl else f"₹{old_sl:.2f} (unchanged)"
 
-    print(f"\n{'-'*50}")
-    print(f" [AGENT 4: RISK MONITOR EVALUATION]")
-    print(f"   Symbol:   {symbol}")
-    print(f"   LTP:      ₹{ltp:.2f} (Entry: ₹{entry:.2f})")
-    print(f"   PnL:      {pnl_pct:+.1f}% (₹{pnl_rupees_total:+.0f})")
-    print(f"   MFE/MAE:  +{mfe_pct:.1f}% / {mae_pct:.1f}%")
-    print(f"   Time:     {mins} mins")
-    print(f"   Decision: >> {decision} <<")
-    print(f"   Rule:     {reason_code} ({triggered})")
-    print(f"   SL Info:  {sl_change}")
-    print(f"{'-'*50}\n")
+    print(f"\n{'─'*60}")
+    print(f" [AGENT 4: RISK MONITOR — {decision_source.upper()}]")
+    print(f"   Symbol:      {symbol}")
+    print(f"   LTP:         ₹{ltp:.2f} (Entry: ₹{entry:.2f})")
+    print(f"   PnL:         {pnl_pct:+.1f}% (₹{pnl_rupees_total:+.0f})")
+    print(f"   MFE/MAE:     +{mfe_pct:.1f}% / {mae_pct:.1f}%")
+    print(f"   Time:        {mins} mins")
+    print(f"   Decision:    >> {decision} <<  [conf={confidence}, thesis={thesis}, urgency={urgency}]")
+    print(f"   Reason:      {reason_code}")
+    print(f"   Source:      {decision_source.upper()} [{result.get('_decision_source_label', '')}]")
+    print(f"   Factors:     {triggered}")
+    print(f"   SL:          {sl_change}")
+    print(f"   Validation:  {validation_status}")
+    if overrides:
+        print(f"   Overrides:   {overrides}")
+    print(f"{'─'*60}\n")
+
+    # Also log to Python logger for file-based audit
+    logger.info(
+        f"RISK_DECISION | {symbol} | {decision} | {reason_code} | "
+        f"pnl={pnl_pct:+.1f}% | conf={confidence} | thesis={thesis} | "
+        f"urgency={urgency} | source={decision_source} | "
+        f"validation={validation_status} | overrides={len(overrides)}"
+    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -129,8 +247,6 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
             }
 
         # ── Step 1: Get all active (open) trades ─────────────────────────
-        # We monitor DBPaperTrade (status == "OPEN") since this represents
-        # actual live positions with real entry prices and quantities.
         active_trades = (
             db.query(db_models.DBPaperTrade)
             .filter(db_models.DBPaperTrade.status == "OPEN")
@@ -180,43 +296,105 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
                     "primary_reason": result.get("primary_reason", ""),
                     "updated_stop_loss": result.get("updated_stop_loss"),
                     "exit_fraction": result.get("exit_fraction", 0.0),
+                    "thesis_status": result.get("thesis_status", "unknown"),
+                    "urgency": result.get("urgency", "unknown"),
+                    "triggered_factors": result.get("triggered_factors", []),
                     "triggered_rules": result.get("triggered_rules", []),
+                    "risk_flags": result.get("risk_flags", []),
                     "pnl_percent": result.get("pnl_percent", 0),
                     "pnl_rupees_total": result.get("pnl_rupees_total", 0),
+                    "_decision_source": result.get("_decision_source", result.get("_source", "unknown")),
+                    "_decision_source_label": result.get("_decision_source_label", ""),
                 })
 
-                # ── Persist to DB ────────────────────────────────────────
+                # ══════════════════════════════════════════════════════════
+                # DECISION EXECUTION — every decision type handled explicitly
+                # ══════════════════════════════════════════════════════════
                 trade.updated_at = _now_ms()
-
-                # If SL was tightened, update the trade's stop_loss natively
                 new_sl = result.get("updated_stop_loss")
-                if new_sl is not None and decision == "TIGHTEN_STOPLOSS":
-                    trade.stop_loss = new_sl
+                ltp = result.get("_features_snapshot", {}).get("ltp") or trade.current_price
 
-                # If EXIT_NOW, close the paper trade immediately
+                # ── EXIT_NOW: close the entire position immediately ───────
                 if decision == "EXIT_NOW":
-                    ltp = result.get("_features_snapshot", {}).get("ltp") or trade.current_price
                     close_result = close_paper_trade(db, trade.id, ltp, "RISK_MONITOR_EXIT")
-                    # close_paper_trade already syncs DBTradeSignal.status and
-                    # risk_monitor_status inside its own logic. We only need to
-                    # persist the detailed risk_monitor_data for dashboard display.
                     if close_result.get("success") and trade.signal_id:
                         sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
                         if sig:
                             sig.risk_monitor_data = result
                             db.commit()
-                    # If close failed (already closed by 15s monitor), skip gracefully
-                else:
-                    # Non-exit decisions: update DBTradeSignal for dashboard visibility
+
+                # ── PARTIAL_EXIT: close entire position (partial close removed) ─
+                elif decision == "PARTIAL_EXIT":
+                    close_result = close_paper_trade(db, trade.id, ltp, "RISK_MONITOR_PARTIAL_EXIT")
+                    if close_result.get("success") and trade.signal_id:
+                        sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
+                        if sig:
+                            sig.risk_monitor_status = "PARTIAL_EXIT"
+                            sig.risk_monitor_data = result
+                            sig.risk_last_checked_at = _now_ms()
+                    elif not close_result.get("success"):
+                        print(f"  [WARN] Exit failed for {trade.symbol}: {close_result.get('error')}")
+
+                # ── TIGHTEN_STOPLOSS: trail the stop loss upward ──────────
+                elif decision == "TIGHTEN_STOPLOSS":
+                    old_sl = trade.stop_loss
+                    sl_updated = False
+
+                    if new_sl is not None:
+                        # Validator already ensures new_sl > old_sl for longs
+                        # and new_sl < old_sl for shorts, but we double-check
+                        is_long = (trade.action == "BUY")
+                        sl_is_tighter = (new_sl > old_sl) if is_long else (new_sl < old_sl)
+
+                        if sl_is_tighter:
+                            trade.stop_loss = new_sl
+                            trade.max_loss_at_sl = round(
+                                abs(trade.entry_price - new_sl) * trade.quantity, 2
+                            )
+                            sl_updated = True
+
+                            print(f"\n{'='*50}")
+                            print(f" [AUTOMATION: STOP LOSS TRAILED]")
+                            print(f"   Symbol:    {trade.symbol}")
+                            print(f"   Old SL:    Rs.{old_sl:.2f}")
+                            print(f"   New SL:    Rs.{new_sl:.2f}")
+                            print(f"   Direction: {'UP' if is_long else 'DOWN'} (tighter)")
+                            print(f"   Max Loss:  Rs.{trade.max_loss_at_sl:.2f}")
+                            print(f"   Reason:    {result.get('reason_code', 'AGENT_TRAIL')}")
+                            print(f"{'='*50}\n")
+
+                    if not sl_updated:
+                        print(f"  [INFO] {trade.symbol}: TIGHTEN_STOPLOSS decision but no valid SL change"
+                              f" (proposed={new_sl}, current={old_sl})")
+
+                    # Sync to signal
                     if trade.signal_id:
                         sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
                         if sig:
                             sig.risk_monitor_status = decision
                             sig.risk_monitor_data = result
                             sig.risk_last_checked_at = _now_ms()
-                            # Ensure signal's stop_loss stays in sync with the paper trade
-                            if new_sl is not None and decision == "TIGHTEN_STOPLOSS":
+                            if sl_updated:
                                 sig.stop_loss = new_sl
+
+                # ── HOLD: no action, just update dashboard ────────────────
+                elif decision == "HOLD":
+                    if trade.signal_id:
+                        sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
+                        if sig:
+                            sig.risk_monitor_status = decision
+                            sig.risk_monitor_data = result
+                            sig.risk_last_checked_at = _now_ms()
+
+                # ── HOLD_WITH_CAUTION: same as HOLD but flagged ───────────
+                else:
+                    # Covers HOLD_WITH_CAUTION and any unexpected decisions
+                    if trade.signal_id:
+                        sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
+                        if sig:
+                            sig.risk_monitor_status = decision
+                            sig.risk_monitor_data = result
+                            sig.risk_last_checked_at = _now_ms()
 
                 db.commit()
 
@@ -239,6 +417,7 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
             "checked_at": run_started,
             "time": now.strftime("%H:%M:%S IST"),
             "total_monitored": len(active_trades),
+            "agent_available": is_agent_available(),
             "summary": summary,
             "results": results,
             "duration_ms": duration,
@@ -258,11 +437,21 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# SINGLE TRADE EVALUATION
+# SINGLE TRADE EVALUATION — Agent-Led with Fallback
 # ═══════════════════════════════════════════════════════════════════════════════
 
 def _evaluate_single_trade(trade: db_models.DBPaperTrade, db: Session) -> dict | None:
-    """Evaluate risk for a single truly open trade.
+    """Evaluate risk for a single open trade using the agent-led pipeline.
+
+    Pipeline:
+      1. Throttle check (skip if too recent)
+      2. Fetch live data (quote, candles, depth)
+      3. Extract features
+      4. Call LLM risk agent
+      5. If LLM fails → run deterministic rule engine as fallback
+      6. Validate output through guardrails
+      7. Log raw + validated decision
+      8. Return validated result
 
     Returns:
         Risk monitor output dict, or None if skipped (too soon since last check).
@@ -270,9 +459,10 @@ def _evaluate_single_trade(trade: db_models.DBPaperTrade, db: Session) -> dict |
     symbol = trade.symbol
 
     # ── Throttle: skip if checked too recently ────────────────────────────
-    # For paper trades, we use updated_at as proxy for last check, 
-    # but to be safe we'll use DBTradeSignal.risk_last_checked_at if linked
-    last_check = trade.updated_at
+    # We must use entry_time, NOT updated_at, because the 15s paper trading monitor
+    # constantly refreshes updated_at, which would infinitely starve the 25s risk monitor.
+    last_check = trade.entry_time or trade.created_at
+    
     if trade.signal_id:
         sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
         if sig and sig.risk_last_checked_at:
@@ -306,13 +496,21 @@ def _evaluate_single_trade(trade: db_models.DBPaperTrade, db: Session) -> dict |
             "reason_code": "DATA_UNAVAILABLE",
             "confidence": 30,
             "primary_reason": f"Live data unavailable: {live_quote['error']}. Defaulting to HOLD.",
+            "thesis_status": "intact",
+            "urgency": "low",
+            "triggered_factors": ["data_unavailable"],
             "triggered_rules": ["data_unavailable"],
+            "risk_flags": ["data_unavailable"],
+            "monitoring_note": "Retry on next cycle when data is available.",
             "updated_stop_loss": None,
             "exit_fraction": 0.0,
             "pnl_percent": 0,
             "time_in_trade_seconds": 0,
             "pnl_rupees_total": 0,
             "_features_snapshot": {},
+            "_source": "data_error",
+            "_validation_status": "clean",
+            "_overrides_applied": [],
         }
 
     candles = fetch_intraday_candles(symbol, interval_minutes=5)
@@ -326,14 +524,106 @@ def _evaluate_single_trade(trade: db_models.DBPaperTrade, db: Session) -> dict |
         depth=depth,
     )
 
-    # ── Step 3: Run rule engine (strict priority, no scoring) ────────────
     old_sl = trade.stop_loss or 0
-    result = evaluate_trade(features)
+    decision_source = "agent"
 
-    # ── Step 4: Log decision ─────────────────────────────────────────────
-    _log_decision(trade.id, symbol, features, result, old_sl)
+    # ── Retrieve previous state for delta/change detection ──────────────
+    previous_state = _get_previous_state(trade.id)
 
-    return result
+    # ── Step 3: Call LLM risk agent ──────────────────────────────────────
+    raw_agent_output = evaluate_risk_with_llm(
+        features=features,
+        depth=depth,
+        previous_state=previous_state,
+    )
+
+    # ── Step 4: Determine if we need deterministic fallback ──────────────
+    agent_source = raw_agent_output.get("_source", "unknown")
+    agent_failed = agent_source in ("agent4_fallback", "agent4_parse_error")
+
+    if agent_failed:
+        # LLM failed — run deterministic rule engine as backup decision-maker
+        decision_source = "rule_engine_fallback"
+        logger.info(f"{symbol}: Agent failed ({agent_source}), running deterministic fallback")
+
+        rule_result = evaluate_trade_deterministic(features)
+
+        # Convert rule engine output to match agent schema
+        raw_agent_output = _adapt_rule_engine_output(rule_result, raw_agent_output)
+
+    # ── Step 5: Validate through guardrails ──────────────────────────────
+    validated_result = validate_agent_output(
+        raw_output=raw_agent_output,
+        features=features,
+        apply_hard_overrides=True,
+    )
+
+    # Preserve source info
+    validated_result["_source"] = agent_source if not agent_failed else "rule_engine_fallback"
+
+    # ── Step 6: Flip-flop detection ──────────────────────────────────────
+    flip_flags = _check_flip_flop(trade.id, validated_result)
+    if flip_flags:
+        existing_flags = validated_result.get("risk_flags", [])
+        validated_result["risk_flags"] = existing_flags + flip_flags
+        validated_result["monitoring_note"] = (
+            validated_result.get("monitoring_note", "") +
+            f" | FLIP-FLOP DETECTED: {flip_flags}"
+        ).strip(" | ")
+
+    # ── Step 7: Record decision in memory ────────────────────────────────
+    _record_decision(trade.id, validated_result)
+
+    # ── Step 8: Log the decision ─────────────────────────────────────────
+    _log_decision(trade.id, symbol, features, validated_result, old_sl, decision_source)
+
+    return validated_result
+
+
+def _adapt_rule_engine_output(rule_result: dict, failed_agent_output: dict) -> dict:
+    """Adapt deterministic rule engine output to match the agent output schema.
+
+    The rule engine uses 'triggered_rules' while the agent uses 'triggered_factors'.
+    This function bridges the two schemas so the validator works uniformly.
+    """
+    # The rule engine already provides: decision, reason_code, primary_reason,
+    # updated_stop_loss, exit_fraction, confidence, triggered_rules
+    adapted = {
+        "decision": rule_result.get("decision", "HOLD"),
+        "reason_code": rule_result.get("reason_code", "RULE_ENGINE"),
+        "primary_reason": rule_result.get("primary_reason", "Deterministic rule engine decision."),
+        "updated_stop_loss": rule_result.get("updated_stop_loss"),
+        "exit_fraction": rule_result.get("exit_fraction", 0.0),
+        "confidence": rule_result.get("confidence", 70),
+        "triggered_factors": rule_result.get("triggered_rules", []),
+        "risk_flags": ["llm_unavailable", "rule_engine_used"],
+        "monitoring_note": (
+            f"Decision from deterministic fallback. "
+            f"Agent error: {failed_agent_output.get('_error', 'unknown')}"
+        ),
+    }
+
+    # Infer thesis_status from rule engine decision
+    decision = adapted["decision"]
+    if decision == "EXIT_NOW":
+        adapted["thesis_status"] = "broken"
+        adapted["urgency"] = "high"
+    elif decision == "PARTIAL_EXIT":
+        adapted["thesis_status"] = "weakening"
+        adapted["urgency"] = "medium"
+    elif decision == "TIGHTEN_STOPLOSS":
+        adapted["thesis_status"] = "weakening"
+        adapted["urgency"] = "medium"
+    else:
+        adapted["thesis_status"] = "intact"
+        adapted["urgency"] = "low"
+
+    # Preserve the source metadata from the failed agent call
+    adapted["_source"] = "rule_engine_fallback"
+    adapted["_model"] = failed_agent_output.get("_model", "rule_engine")
+    adapted["_latency_ms"] = failed_agent_output.get("_latency_ms", 0)
+
+    return adapted
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -387,17 +677,24 @@ def get_risk_monitor_summary(db: Session = None) -> dict:
                 "reason_code": rm_data.get("reason_code", ""),
                 "confidence": rm_data.get("confidence", 0),
                 "primary_reason": rm_data.get("primary_reason", ""),
+                "thesis_status": rm_data.get("thesis_status", "unknown"),
+                "urgency": rm_data.get("urgency", "unknown"),
                 "triggered_rules": rm_data.get("triggered_rules", []),
+                "triggered_factors": rm_data.get("triggered_factors", []),
+                "risk_flags": rm_data.get("risk_flags", []),
                 "pnl_percent": rm_data.get("pnl_percent", 0),
                 "pnl_rupees_total": rm_data.get("pnl_rupees_total", 0),
                 "updated_stop_loss": rm_data.get("updated_stop_loss"),
                 "last_checked_at": last_check,
+                "_decision_source": rm_data.get("_decision_source", rm_data.get("_source", "unknown")),
+                "_decision_source_label": rm_data.get("_decision_source_label", ""),
             })
 
         return {
             "market_date": today,
             "total_active_trades": len(trades),
             "market_open": _market_is_open(),
+            "agent_available": is_agent_available(),
             "trades": trades,
         }
 
