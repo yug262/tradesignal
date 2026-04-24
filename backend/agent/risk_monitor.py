@@ -42,7 +42,7 @@ from agent.gemini_risk_monitor import (
 )
 from agent.risk_agent_validator import validate_agent_output
 from agent.risk_rules import evaluate_trade as evaluate_trade_deterministic
-from agent.paper_trading_engine import close_paper_trade, partial_close_paper_trade
+from agent.paper_trading_engine import close_paper_trade
 
 logger = logging.getLogger("risk_monitor")
 
@@ -323,22 +323,17 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
                             sig.risk_monitor_data = result
                             db.commit()
 
-                # ── PARTIAL_EXIT: sell a fraction, keep the rest open ─────
+                # ── PARTIAL_EXIT: close entire position (partial close removed) ─
                 elif decision == "PARTIAL_EXIT":
-                    exit_fraction = result.get("exit_fraction", 0.5)
-                    partial_result = partial_close_paper_trade(
-                        db, trade.id, ltp,
-                        exit_fraction=exit_fraction,
-                        exit_reason="RISK_MONITOR_PARTIAL_EXIT",
-                    )
-                    if partial_result.get("success") and trade.signal_id:
+                    close_result = close_paper_trade(db, trade.id, ltp, "RISK_MONITOR_PARTIAL_EXIT")
+                    if close_result.get("success") and trade.signal_id:
                         sig = db.query(db_models.DBTradeSignal).filter_by(id=trade.signal_id).first()
                         if sig:
                             sig.risk_monitor_status = "PARTIAL_EXIT"
                             sig.risk_monitor_data = result
                             sig.risk_last_checked_at = _now_ms()
-                    elif not partial_result.get("success"):
-                        print(f"  [WARN] Partial exit failed for {trade.symbol}: {partial_result.get('error')}")
+                    elif not close_result.get("success"):
+                        print(f"  [WARN] Exit failed for {trade.symbol}: {close_result.get('error')}")
 
                 # ── TIGHTEN_STOPLOSS: trail the stop loss upward ──────────
                 elif decision == "TIGHTEN_STOPLOSS":

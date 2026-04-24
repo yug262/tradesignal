@@ -3,7 +3,6 @@ from database import Base
 
 class NewsArticle(Base):
     __tablename__ = "news_articles"
-
     id = Column(String, primary_key=True, index=True)
     title = Column(String)
     description = Column(String, nullable=True)
@@ -22,7 +21,6 @@ class NewsArticle(Base):
 
 class DBSystemConfig(Base):
     __tablename__ = "system_config"
-
     id = Column(Integer, primary_key=True, index=True)
     capital = Column(Float, default=100000.0)
     risk_per_trade_pct = Column(Float, default=1.0)
@@ -38,7 +36,6 @@ class DBSystemConfig(Base):
 
 class DBProcessingState(Base):
     __tablename__ = "processing_state"
-
     id = Column(Integer, primary_key=True, index=True)
     last_processed_article_id = Column(String, nullable=True)
     last_poll_timestamp = Column(BigInteger, default=0)
@@ -47,10 +44,8 @@ class DBProcessingState(Base):
     is_polling_active = Column(Boolean, default=False)
     articles_in_queue = Column(Integer, default=0)
 
-
 class DBTradeSignal(Base):
     __tablename__ = "trade_signals"
-
     id = Column(String, primary_key=True, index=True)
     symbol = Column(String, nullable=False, index=True)
     signal_type = Column(String, nullable=False)       # BUY | SELL | HOLD | NO_TRADE
@@ -66,22 +61,18 @@ class DBTradeSignal(Base):
     generated_at = Column(BigInteger, nullable=False)
     market_date = Column(String, nullable=False, index=True)  # YYYY-MM-DD
     status = Column(String, default="pending_confirmation")  # pending_confirmation | confirmed | revised | invalidated
-
     # -- Market Open Confirmation Agent (Phase 2) columns --
     confirmation_status = Column(String, default="pending")  # pending | confirmed | revised | invalidated
     confirmed_at = Column(BigInteger, nullable=True)          # Timestamp when Agent 2 ran
     confirmation_data = Column(JSON, nullable=True)           # Full Gemini confirmation output
-
     # -- Execution Agent (Phase 3) columns --
     execution_status = Column(String, default="pending")      # pending | planned | skipped
     executed_at = Column(BigInteger, nullable=True)           # Timestamp when Agent 3 ran
     execution_data = Column(JSON, nullable=True)              # Full Gemini execution plan output
-
     # -- Risk Monitor Agent (Phase 4) columns --
     risk_monitor_status = Column(String, nullable=True)       # HOLD | HOLD_WITH_CAUTION | TIGHTEN_STOPLOSS | PARTIAL_EXIT | EXIT_NOW
     risk_monitor_data = Column(JSON, nullable=True)           # Full risk monitor output JSON
     risk_last_checked_at = Column(BigInteger, nullable=True)  # Timestamp of last risk check
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAPER TRADING MODELS
@@ -90,7 +81,6 @@ class DBTradeSignal(Base):
 class DBPaperTrade(Base):
     """Paper trade lifecycle — from entry to exit."""
     __tablename__ = "paper_trades"
-
     id = Column(String, primary_key=True, index=True)
     symbol = Column(String, nullable=False, index=True)
     action = Column(String, nullable=False)               # BUY | SELL
@@ -117,11 +107,9 @@ class DBPaperTrade(Base):
     created_at = Column(BigInteger, nullable=False)
     updated_at = Column(BigInteger, nullable=False)
 
-
 class DBPortfolio(Base):
     """Virtual portfolio state — single row, updated on every trade."""
     __tablename__ = "portfolio"
-
     id = Column(Integer, primary_key=True, index=True)
     total_capital = Column(Float, default=100000.0)
     available_cash = Column(Float, default=100000.0)
@@ -139,11 +127,9 @@ class DBPortfolio(Base):
     todays_date = Column(String, nullable=True)            # YYYY-MM-DD, reset daily
     updated_at = Column(BigInteger, nullable=True)
 
-
 class DBMarketSentiment(Base):
     """Market sentiment extracted from Agent 1 Discovery output."""
     __tablename__ = "market_sentiment"
-
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     symbol = Column(String, nullable=False, index=True)
     sector = Column(String, nullable=True)
@@ -155,11 +141,9 @@ class DBMarketSentiment(Base):
     market_date = Column(String, nullable=True, index=True)
     updated_at = Column(BigInteger, nullable=True)
 
-
 class DBAgentLog(Base):
     """Structured agent activity log for audit trail."""
     __tablename__ = "agent_logs"
-
     id = Column(Integer, primary_key=True, index=True, autoincrement=True)
     agent_name = Column(String, nullable=False)            # AGENT_1 | AGENT_2 | AGENT_3 | AGENT_4 | PAPER_TRADING
     symbol = Column(String, nullable=True, index=True)
@@ -169,3 +153,14 @@ class DBAgentLog(Base):
     details = Column(JSON, nullable=True)                  # Extra structured data
     trade_id = Column(String, nullable=True)               # Reference to paper_trades.id
     created_at = Column(BigInteger, nullable=False)
+
+class DBIndicatorData(Base):
+    """Stores technical indicator values for stocks as arrays."""
+    __tablename__ = "indicator_data"
+    id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    symbol = Column(String, nullable=False, index=True)
+    indicator_name = Column(String, nullable=False)
+    timeframe = Column(String, nullable=False)             # 1m | 1D
+    timestamps = Column(ARRAY(BigInteger), default=[])     # Array of ms epochs
+    values = Column(ARRAY(Float), default=[])              # Array of calculated values
+    updated_at = Column(BigInteger, nullable=False)
