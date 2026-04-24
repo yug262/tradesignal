@@ -4,3 +4,4 @@ venv
 .env
 dist/
 __init__.py
+test*.py

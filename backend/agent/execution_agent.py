@@ -150,7 +150,10 @@ def run_execution_planner(db: Session = None) -> dict:
                     "_source": "no_data_skip"
                 }
                 summary["skipped"] += 1
-                continue
+            # --- LOGGING: [PROCESSING SYMBOL] ---
+            print(f"\n\n{'#'*60}")
+            print(f"  [PROCESSING SYMBOL: {sig.symbol}]")
+            print(f"{'#'*60}\n")
 
             agent2_view = sig.confirmation_data if isinstance(sig.confirmation_data, dict) else {}
             agent2_input_view = {

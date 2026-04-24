@@ -288,6 +288,25 @@ def run_market_open_confirmation(db: Session = None) -> dict:
             sig.trade_mode = confirmation.get("trade_mode", "NONE")
             sig.confidence = confirmation.get("confidence", discovery_output.get("confidence", 0))
 
+            # --- LOGGING: [AGENT 2 OUTPUT] ---
+            print(f"\n==============================")
+            print(f"[AGENT 2 OUTPUT]")
+            print(f"==============================")
+            print(f"symbol: {sig.symbol}")
+            print(f"decision: {decision}")
+            print(f"direction: {confirmation.get('direction', 'NEUTRAL')}")
+            print(f"trade_mode: {sig.trade_mode}")
+            print(f"confidence: {sig.confidence}")
+            
+            indicators = confirmation.get("requested_indicators", [])
+            if indicators:
+                print(f"requested_indicators:")
+                for ind in indicators:
+                    print(f"  - {ind.get('name')} ({ind.get('timeframe')})")
+            else:
+                print(f"requested_indicators: NONE (NO TRADE or fallback)")
+            print(f"==============================\n")
+
             summary["confirmed" if is_trade else "invalidated"] += 1
             results.append({
                 "symbol": sig.symbol,
