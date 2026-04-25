@@ -148,6 +148,25 @@ Indicators must NOT:
 - Create a trade on their own — they are supporting evidence only
 - Replace structural analysis of price location
 
+STEP 1.6 — VISUAL CHART ANALYSIS (IF PROVIDED)
+If a technical chart image is attached to this request, analyze it visually:
+- Examine candlestick patterns: doji, engulfing, hammer, shooting star, marubozu, etc.
+- Observe price structure: higher highs/lows, lower highs/lows, range, breakout, breakdown
+- Read indicator subplots (RSI, MACD, ATR) for divergences, crossovers, and extremes
+- Assess volume profile: increasing on breakouts, declining on pullbacks
+- Check support/resistance zones visible from candle clustering
+- Identify trend direction from moving average slopes and price relationship to MAs
+
+Visual analysis MUST:
+- Complement (not replace) the numeric indicator_values already provided
+- Be used to detect patterns that numbers alone may miss (e.g., chart patterns, candle shapes)
+- Strengthen or weaken your confidence in the execution decision
+
+Visual analysis must NOT:
+- Override Agent 2 decision or hard risk limits
+- Create a trade on its own
+- Be used if the chart is unclear, corrupted, or unreadable
+
 STEP 2 — PRICE LOCATION AND STRUCTURE
 Evaluate current execution context using:
 - ltp
@@ -726,7 +745,7 @@ def fetch_fresh_execution_context(symbol: str) -> dict:
 # Main planner
 # ---------------------------
 
-def plan_execution(input_data: dict, risk_config: dict = None) -> dict:
+def plan_execution(input_data: dict, risk_config: dict = None, chart_image_bytes: bytes = None) -> dict:
     symbol = input_data.get("symbol", "UNKNOWN")
     company_name = input_data.get("company_name", symbol)
     risk_config = risk_config or {}
@@ -779,6 +798,8 @@ def plan_execution(input_data: dict, risk_config: dict = None) -> dict:
         for k, v in ind_vals.items():
             status = v.get("interpretation") if v.get("valid") else "INVALID"
             print(f" - {k}: {v.get('latest')} ({status})")
+    chart_attached = chart_image_bytes is not None and len(chart_image_bytes) > 0
+    print(f"chart_attached: {chart_attached} ({len(chart_image_bytes) // 1024}KB)" if chart_attached else "chart_attached: False")
     print(f"==============================\n")
 
     if not _client:
@@ -798,10 +819,29 @@ def plan_execution(input_data: dict, risk_config: dict = None) -> dict:
         input_json=json.dumps(input_data, indent=2)
     )
 
+    # Build multimodal content: text prompt + optional chart image
+    if chart_image_bytes and len(chart_image_bytes) > 0:
+        # Multimodal request: image + text
+        chart_part = types.Part.from_bytes(
+            data=chart_image_bytes,
+            mime_type="image/png",
+        )
+        chart_instruction = (
+            "\n\n=== ATTACHED: TECHNICAL CHART IMAGE ===\n"
+            "A candlestick chart with indicator overlays is attached below. "
+            "Analyze the visual price action, candle patterns, indicator shapes, "
+            "trend structure, and support/resistance zones visible in this chart. "
+            "Use this visual analysis in STEP 1.6 to complement the numeric data.\n"
+        )
+        contents = [chart_instruction + prompt, chart_part]
+        print(f"  [MULTIMODAL] Sending chart image ({len(chart_image_bytes) // 1024}KB) + text prompt to Gemini")
+    else:
+        contents = prompt
+
     try:
         response = _client.models.generate_content(
             model=MODEL_NAME,
-            contents=prompt,
+            contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=AGENT3_SYSTEM_INSTRUCTION,
                 temperature=0.1,

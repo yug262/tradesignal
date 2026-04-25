@@ -288,6 +288,59 @@ def _paper_trade_monitor_job():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# JOB 7: Live News Monitor (every 60s during market hours 09:15–15:30)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _live_news_monitor_job():
+    """
+    Live Market News Agent (Agent 1+2 combined intraday).
+    Runs every 60 seconds during market hours (09:15–15:30 IST).
+
+    For each polling cycle:
+      1. Pull any news published in the last 2 minutes with impact_score >= 5
+      2. Fetch live LTP + publish-time price for each affected symbol
+      3. Run combined Gemini Discovery+Confirmation prompt
+      4. Store result in live_news_events table
+      5. Trigger Agent 3 if confidence >= 65 and should_trade == True
+
+    The live_news_agent itself handles:
+      - Market hours + trading day guard (skips if closed)
+      - In-session article deduplication (won't re-analyze same article)
+      - Error isolation per symbol
+    """
+    from agent.live_news_agent import run_live_news_monitor
+
+    now = datetime.now(IST)
+
+    # Quick guard at scheduler level — skip weekends + non-market hours
+    if now.weekday() >= 5:
+        return
+    hhmm = now.hour * 100 + now.minute
+    if hhmm < 915 or hhmm > 1530:
+        return
+
+    try:
+        result = run_live_news_monitor()
+        status = result.get("status", "unknown")
+
+        # Only print if there was actual work done
+        if status == "completed" and result.get("symbols_analyzed", 0) > 0:
+            print(
+                f"[LIVE NEWS] {now.strftime('%H:%M:%S')} | "
+                f"Articles: {result.get('new_articles_found', 0)} | "
+                f"Symbols: {result.get('symbols_analyzed', 0)} | "
+                f"Trade Signals: {result.get('trade_signals_generated', 0)} | "
+                f"Agent3: {result.get('agent3_triggered', 0)} | "
+                f"({result.get('duration_ms', 0)}ms)"
+            )
+        elif status not in ("no_new_news", "all_already_processed", "skipped_outside_market_hours", "skipped_non_trading_day", "idle"):
+            print(f"[LIVE NEWS] {now.strftime('%H:%M:%S')} | Status: {status}")
+
+    except Exception as e:
+        print(f"[LIVE NEWS MONITOR] Error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Scheduler Init / Shutdown
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -356,6 +409,15 @@ def init_scheduler():
         replace_existing=True,
     )
 
+    # ── JOB 7: Live News Monitor (every 60s during market hours 09:15-15:30) ─
+    scheduler.add_job(
+        _live_news_monitor_job,
+        trigger=IntervalTrigger(seconds=60, timezone=IST_TZ),
+        id="live_news_monitor",
+        name="Live News Monitor Agent (every 60s, 09:15-15:30 Mon-Fri)",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _is_started = True
 
@@ -366,6 +428,7 @@ def init_scheduler():
     print(f"  4. Market Open Confirm (Agent 2) : 09:16 AM IST (Mon-Fri trading days)")
     print(f"  5. Risk Monitor (Agent 4)        : every 30s (09:16-15:30 Mon-Fri)")
     print(f"  6. Paper Trade Monitor           : every 15s (09:16-15:30 Mon-Fri)")
+    print(f"  7. Live News Monitor (Agent 1+2) : every 60s (09:15-15:30 Mon-Fri)")
     print(f"[SCHEDULER] ==================================\n")
 
 

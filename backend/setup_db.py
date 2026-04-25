@@ -212,6 +212,25 @@ def create_database():
                 );
                 CREATE INDEX IF NOT EXISTS idx_indicator_data_symbol ON indicator_data(symbol);
             """,
+            "live_news_events": """
+                CREATE TABLE IF NOT EXISTS live_news_events (
+                    id TEXT PRIMARY KEY,
+                    symbol TEXT NOT NULL,
+                    news_ids JSON,
+                    triggered_at BIGINT NOT NULL,
+                    current_price FLOAT,
+                    publish_time_price FLOAT,
+                    gemini_output JSON,
+                    should_trade BOOLEAN DEFAULT FALSE,
+                    confidence FLOAT DEFAULT 0.0,
+                    agent3_triggered BOOLEAN DEFAULT FALSE,
+                    market_date TEXT,
+                    created_at BIGINT NOT NULL
+                );
+                CREATE INDEX IF NOT EXISTS idx_live_news_events_symbol ON live_news_events(symbol);
+                CREATE INDEX IF NOT EXISTS idx_live_news_events_date ON live_news_events(market_date);
+                CREATE INDEX IF NOT EXISTS idx_live_news_events_triggered_at ON live_news_events(triggered_at);
+            """,
         }
 
         for table_name, create_sql in tables.items():
