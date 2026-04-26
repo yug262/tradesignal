@@ -28,46 +28,90 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
-def _validate_execution_plan(plan: dict) -> dict | None:
-    """Validate that an execution plan has all required numeric fields.
+def _extract_v2_fields(plan: dict) -> dict | None:
+    """Extract execution fields from V2 schema, with legacy fallback.
 
-    Returns a dict of validated values if valid, or None if incomplete.
-    This is the final structural gate before any paper trade creation.
+    Priority: _v2_execution_decision > execution_decision(dict) > legacy flat fields.
+    Returns a dict of validated values if valid for ENTER_NOW, or None.
     """
     if not isinstance(plan, dict):
         return None
 
-    ep = plan.get("entry_plan", {})
-    sl = plan.get("stop_loss", {})
-    tg = plan.get("target", {})
-    sizing = plan.get("position_sizing", {})
+    # ── Read V2 execution decision ──
+    v2 = plan.get("_v2_execution_decision", {})
+    if not v2 and isinstance(plan.get("execution_decision"), dict):
+        v2 = plan["execution_decision"]
 
-    entry_val = ep.get("entry_price") if isinstance(ep, dict) else None
-    sl_val = sl.get("price") if isinstance(sl, dict) else None
-    tg_val = tg.get("price") if isinstance(tg, dict) else None
-    shares_val = sizing.get("position_size_shares", 0) if isinstance(sizing, dict) else 0
+    action = v2.get("action", "") if v2 else ""
+    direction = v2.get("direction", "NONE") if v2 else "NONE"
+    trade_mode = v2.get("trade_mode", "NONE") if v2 else "NONE"
+    confidence = v2.get("confidence", "LOW") if v2 else "LOW"
+    reason = v2.get("reason", "") if v2 else ""
 
-    # All four must be positive numbers
+    # ── Read trade plan (V2 direct) ──
+    tp = plan.get("trade_plan", {})
+    if isinstance(tp, dict) and tp.get("entry_price") is not None:
+        entry_val = tp.get("entry_price", 0)
+        sl_val = tp.get("stop_loss", 0)
+        tgt_val = tp.get("target_price", 0)
+        rr_val = tp.get("risk_reward", 0)
+    else:
+        # Legacy fallback
+        ep = plan.get("entry_plan", {}) or {}
+        sl = plan.get("stop_loss", {}) or {}
+        tg = plan.get("target", {}) or {}
+        entry_val = ep.get("entry_price", 0) if isinstance(ep, dict) else 0
+        sl_val = sl.get("price", 0) if isinstance(sl, dict) else 0
+        tgt_val = tg.get("price", 0) if isinstance(tg, dict) else 0
+        rr_val = 0
+
+    # ── Read position sizing (V2 direct) ──
+    ps = plan.get("position_sizing", {}) or {}
+    quantity = ps.get("quantity", 0) or ps.get("position_size_shares", 0)
+    capital_used = ps.get("capital_used", 0) or ps.get("position_size_inr", 0)
+    risk_amount = ps.get("risk_amount", 0) or ps.get("max_loss_at_sl", 0)
+    capital_pct = ps.get("capital_used_pct", 0)
+    if not capital_pct and plan.get("_risk_params", {}).get("total_capital", 0) > 0:
+        capital_pct = round((capital_used / plan["_risk_params"]["total_capital"]) * 100, 2)
+
+    # ── Read order payload (V2 direct) ──
+    op = plan.get("order_payload", {}) or {}
+
     try:
-        if not (entry_val and float(entry_val) > 0
-                and sl_val and float(sl_val) > 0
-                and tg_val and float(tg_val) > 0
-                and shares_val and int(shares_val) > 0):
-            return None
+        entry_f = float(entry_val) if entry_val else 0
+        sl_f = float(sl_val) if sl_val else 0
+        tgt_f = float(tgt_val) if tgt_val else 0
+        qty_i = int(quantity) if quantity else 0
+        rr_f = float(rr_val) if rr_val else 0
     except (TypeError, ValueError):
-        return None
+        entry_f = sl_f = tgt_f = rr_f = 0.0
+        qty_i = 0
 
     return {
-        "entry_price": float(entry_val),
-        "stop_loss": float(sl_val),
-        "target_price": float(tg_val),
-        "shares": int(shares_val),
-        "position_size_inr": sizing.get("position_size_inr", 0) if isinstance(sizing, dict) else 0,
-        "capital_used_pct": sizing.get("capital_used_pct", 0) if isinstance(sizing, dict) else 0,
+        "action": action,
+        "direction": direction,
+        "trade_mode": trade_mode,
+        "confidence": confidence,
+        "reason": reason,
+        "entry_price": entry_f,
+        "stop_loss": sl_f,
+        "target_price": tgt_f,
+        "risk_reward": rr_f,
+        "shares": qty_i,
+        "capital_used": capital_used,
+        "capital_used_pct": capital_pct,
+        "risk_amount": risk_amount,
+        "order_payload": op,
+        "is_executable": (
+            action == "ENTER_NOW"
+            and entry_f > 0 and sl_f > 0 and tgt_f > 0
+            and qty_i > 0
+            and op.get("transaction_type") in ("BUY", "SELL")
+        ),
     }
 
 
-def run_execution_planner(db: Session = None) -> dict:
+def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
     """
     Execute the Execution Planner pipeline (Agent 3).
 
@@ -91,14 +135,16 @@ def run_execution_planner(db: Session = None) -> dict:
         print(f"{'='*60}")
 
         # -- Step 1: Get today's confirmed but un-executed signals --
-        pending_signals = (
+        query = (
             db.query(db_models.DBTradeSignal)
             .filter(db_models.DBTradeSignal.market_date == market_date)
             .filter(db_models.DBTradeSignal.confirmation_status == "confirmed")
             .filter(db_models.DBTradeSignal.execution_status == "pending")
-            .order_by(db_models.DBTradeSignal.symbol) # Sort to prevent deadlocks
-            .all()
         )
+        if signal_ids:
+            query = query.filter(db_models.DBTradeSignal.id.in_(signal_ids))
+            
+        pending_signals = query.order_by(db_models.DBTradeSignal.symbol).all()
 
         if not pending_signals:
             print("\n[WARN] No confirmed signals pending execution found for today.")
@@ -156,20 +202,8 @@ def run_execution_planner(db: Session = None) -> dict:
             print(f"{'#'*60}\n")
 
             agent2_view = sig.confirmation_data if isinstance(sig.confirmation_data, dict) else {}
-            agent2_input_view = {
-                "decision": agent2_view.get("decision", "TRADE"),
-                "trade_mode": agent2_view.get("trade_mode", sig.trade_mode),
-                "direction": agent2_view.get("direction", "NEUTRAL"),
-                "remaining_impact": agent2_view.get("remaining_impact", "UNCLEAR"),
-                "priced_in_status": agent2_view.get("priced_in_status", "UNCLEAR"),
-                "priority": agent2_view.get("priority", "LOW"),
-                "confidence": agent2_view.get("confidence", 0),
-                "why_tradable_or_not": agent2_view.get("why_tradable_or_not", ""),
-                "key_confirmations": agent2_view.get("key_confirmations", []),
-                "warning_flags": agent2_view.get("warning_flags", []),
-                "invalid_if": agent2_view.get("invalid_if", []),
-                "final_summary": agent2_view.get("final_summary", "")
-            }
+            # Pass the new Market Reality Validator schema directly to Agent 3
+            agent2_input_view = agent2_view
 
             snapshot = sig.stock_snapshot if isinstance(sig.stock_snapshot, dict) else {}
             prev_close = snapshot.get("last_close") or live_data.get("last_close") or 0
@@ -234,9 +268,55 @@ def run_execution_planner(db: Session = None) -> dict:
                 "live_execution_context": live_execution_context
             }
 
-            # ── Build technical_context from Agent 2's requested_indicators ──
-            requested_indicators = agent2_view.get("requested_indicators", [])
-            if requested_indicators and isinstance(requested_indicators, list):
+            # ── Read Agent 2.5 technical analysis (pre-computed) ──
+            exec_data = sig.execution_data if isinstance(sig.execution_data, dict) else {}
+            agent25_data = exec_data.get("technical_analysis_data")
+
+            if agent25_data and isinstance(agent25_data, dict):
+                agent3_input["agent25_technical_analysis"] = agent25_data
+                ta = agent25_data.get("technical_analysis", {})
+                overall = ta.get("overall", {})
+                handoff = ta.get("agent_3_handoff", {})
+                print(f"      [AGENT 2.5] {sig.symbol}: bias={overall.get('technical_bias')} "
+                      f"confidence={overall.get('confidence')} grade={overall.get('technical_grade')} "
+                      f"go_no_go={handoff.get('technical_go_no_go')}")
+
+                # Also pass legacy technical_context for backward compatibility
+                agent3_input["technical_context"] = {
+                    "requested_by_agent2": exec_data.get("indicators_computed", []),
+                    "indicator_values": {},
+                    "technical_warnings": ta.get("risks", []),
+                    "technical_confirmations": ta.get("what_agent_3_should_care_about", []),
+                }
+
+                if handoff.get("technical_go_no_go") in ["WAIT", "NO_GO"]:
+                    print(f"      [SKIP] {sig.symbol}: Agent 2.5 technical_go_no_go is {handoff.get('technical_go_no_go')} — skipping execution planning.")
+                    sig.execution_status = "skipped"
+                    sig.executed_at = _now_ms()
+                    exec_data_new = dict(exec_data)
+                    exec_data_new["action"] = "AVOID"
+                    exec_data_new["execution_decision"] = "NO TRADE"
+                    exec_data_new["why_now_or_why_wait"] = handoff.get("go_no_go_reason", "Agent 2.5 determined it is not a GO.")
+                    exec_data_new["_source"] = "agent25_skip"
+                    sig.execution_data = exec_data_new
+                    summary["avoided"] += 1
+                    continue
+            else:
+                # Fallback: compute indicators directly (legacy path)
+                print(f"      [WARN] {sig.symbol}: No Agent 2.5 data — using legacy indicator path")
+                trade_mode = sig.trade_mode or "INTRADAY"
+                if trade_mode == "INTRADAY":
+                    requested_indicators = [
+                        {"name": "RSI", "timeframe": "1m", "reason": "Check short-term exhaustion"},
+                        {"name": "EMA", "timeframe": "1m", "reason": "Check immediate trend"},
+                        {"name": "ATR", "timeframe": "1m", "reason": "Estimate volatility"},
+                    ]
+                else:
+                    requested_indicators = [
+                        {"name": "RSI", "timeframe": "1D", "reason": "Check daily exhaustion"},
+                        {"name": "EMA", "timeframe": "1D", "reason": "Check broader trend"},
+                        {"name": "MACD", "timeframe": "1D", "reason": "Check momentum"},
+                    ]
                 try:
                     technical_context = build_technical_context(
                         db=db,
@@ -246,7 +326,6 @@ def run_execution_planner(db: Session = None) -> dict:
                         ltp=ltp,
                     )
                     agent3_input["technical_context"] = technical_context
-                    print(f"      [TECH] {sig.symbol}: {len(technical_context.get('indicator_values', {}))} indicators computed")
                 except Exception as e:
                     print(f"      [WARN] {sig.symbol}: technical_context build failed: {e}")
                     agent3_input["technical_context"] = {
@@ -255,13 +334,6 @@ def run_execution_planner(db: Session = None) -> dict:
                         "technical_warnings": [f"Technical context build failed: {str(e)}"],
                         "technical_confirmations": [],
                     }
-            else:
-                agent3_input["technical_context"] = {
-                    "requested_by_agent2": [],
-                    "indicator_values": {},
-                    "technical_warnings": [],
-                    "technical_confirmations": [],
-                }
 
             tasks.append((sig, agent3_input))
 
@@ -277,9 +349,9 @@ def run_execution_planner(db: Session = None) -> dict:
             print(f"      [GEMINI] Agent 3 planning {symbol} (sig={signal_id[:12]})...")
             try:
                 res = plan_execution(inp, risk_config=risk_config)
-                action = res.get("action", "AVOID").upper()
-                exec_dec = res.get("execution_decision", "NO TRADE").upper()
-                print(f"      [RESULT] {symbol}: {action} | {exec_dec} | Confidence: {res.get('confidence')}")
+                v2f = _extract_v2_fields(res)
+                print(f"      [RESULT] {symbol}: v2.action={v2f['action']} "
+                      f"direction={v2f['direction']} confidence={v2f['confidence']}")
                 return signal_id, res
             except Exception as e:
                 print(f"      [ERROR] {symbol} (sig={signal_id[:12]}): {e}")
@@ -303,7 +375,6 @@ def run_execution_planner(db: Session = None) -> dict:
                         returned_id, execution_plan = future.result()
                         
                         if not execution_plan:
-                            # Gemini returned nothing for this signal
                             sig.execution_status = "skipped"
                             sig.executed_at = _now_ms()
                             sig.execution_data = {
@@ -319,108 +390,118 @@ def run_execution_planner(db: Session = None) -> dict:
                             db.commit()
                             continue
 
-                        action = execution_plan.get("action", "AVOID").upper()
-                        exec_dec = execution_plan.get("execution_decision", "NO TRADE").upper()
+                        # ── Extract V2 fields ─────────────────────────────────────
+                        v2 = _extract_v2_fields(execution_plan)
+                        v2_action = v2["action"]
 
-                        # Always persist Gemini result regardless of outcome
+                        # Always persist full execution result, merging with existing (e.g. Agent 2.5 data)
                         sig.executed_at = _now_ms()
-                        sig.execution_data = execution_plan
+                        existing_data = sig.execution_data if isinstance(sig.execution_data, dict) else {}
+                        existing_data.update(execution_plan)
+                        sig.execution_data = existing_data
 
-                        # ── Decision routing ─────────────────────────────────────
-                        if exec_dec == "NO TRADE":
-                            sig.execution_status = "skipped"
-                            sig.status = "invalidated"
-                            summary["avoided"] += 1
-                            _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
-                                        f"Execution avoided: {exec_dec}",
-                                        confidence=execution_plan.get('confidence', 0))
+                        # ── V2 Logging ────────────────────────────────────────────
+                        print(f"      [AGENT 3] {sig.symbol}: V2 action={v2_action}")
+                        print(f"      [AGENT 3]   trade_mode={v2['trade_mode']} direction={v2['direction']}")
+                        if v2_action == "ENTER_NOW":
+                            print(f"      [AGENT 3]   entry={v2['entry_price']} sl={v2['stop_loss']} "
+                                  f"target={v2['target_price']} rr={v2['risk_reward']}")
+                            print(f"      [AGENT 3]   quantity={v2['shares']} capital={v2['capital_used']}")
 
-                        elif exec_dec == "AVOID CHASE":
-                            sig.execution_status = "skipped"
-                            sig.status = "confirmed"  # Retryable
-                            summary["avoided"] += 1
-                            _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
-                                        f"Execution avoided: {exec_dec}",
-                                        confidence=execution_plan.get('confidence', 0))
+                        # ── V2 Decision routing ───────────────────────────────────
+                        # Legacy compat: read old fields for _log_action confidence
+                        old_conf = execution_plan.get("confidence", 0)
+                        old_action = execution_plan.get("action", "AVOID")
 
-                        elif exec_dec == "ENTER NOW":
-                            # ── Validate plan BEFORE marking as planned ──────────
-                            validated = _validate_execution_plan(execution_plan)
-
-                            if validated is None:
-                                ep = execution_plan.get("entry_plan", {})
-                                sl = execution_plan.get("stop_loss", {})
-                                tg = execution_plan.get("target", {})
-                                sz = execution_plan.get("position_sizing", {})
-                                print(f"      [WARN] {sig.symbol}: ENTER NOW but plan is incomplete "
-                                      f"(entry={ep.get('entry_price') if isinstance(ep, dict) else None}, "
-                                      f"sl={sl.get('price') if isinstance(sl, dict) else None}, "
-                                      f"tg={tg.get('price') if isinstance(tg, dict) else None}, "
-                                      f"shares={sz.get('position_size_shares') if isinstance(sz, dict) else None}) "
-                                      f"— downgrading to skipped")
+                        if v2_action == "ENTER_NOW":
+                            if not v2["is_executable"]:
+                                print(f"      [WARN] {sig.symbol}: ENTER_NOW but not executable "
+                                      f"(entry={v2['entry_price']}, sl={v2['stop_loss']}, "
+                                      f"target={v2['target_price']}, qty={v2['shares']}) "
+                                      f"-- downgrading to skipped")
                                 sig.execution_status = "skipped"
-                                sig.status = "confirmed"  # Retryable
+                                sig.status = "confirmed"
                                 summary["skipped"] += 1
-                                _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
-                                            f"Execution skipped: ENTER NOW with incomplete plan data",
-                                            confidence=execution_plan.get('confidence', 0))
+                                _log_action(db, "Agent 3 (Execution)", sig.symbol, old_action,
+                                            "Execution skipped: ENTER_NOW with incomplete plan data",
+                                            confidence=old_conf)
                             else:
-                                # Plan is fully validated — NOW mark as planned
                                 sig.execution_status = "planned"
                                 sig.status = "planned"
-                                sig.signal_type = "BUY" if action == "BUY" else "SELL" if action == "SELL" else "WATCH"
-                                sig.entry_price = validated["entry_price"]
-                                sig.stop_loss = validated["stop_loss"]
-                                sig.target_price = validated["target_price"]
+                                sig.signal_type = "BUY" if v2["direction"] == "LONG" else "SELL" if v2["direction"] == "SHORT" else "WATCH"
+                                sig.entry_price = v2["entry_price"]
+                                sig.stop_loss = v2["stop_loss"]
+                                sig.target_price = v2["target_price"]
                                 summary["planned"] += 1
 
-                                print(f"      [SIZING] {validated['shares']} shares @ Rs.{validated['entry_price']} "
-                                      f"= Rs.{validated['position_size_inr']:,.0f} ({validated['capital_used_pct']}% of capital)")
+                                print(f"      [SIZING] {v2['shares']} shares @ Rs.{v2['entry_price']} "
+                                      f"= Rs.{v2['capital_used']:,.0f} ({v2['capital_used_pct']}% of capital)")
+                                print(f"      [AGENT 3] paper_trade_created=pending")
 
-                                # Paper trade creation — final gate (happens NOW)
                                 pt_result = auto_create_from_execution(db, sig)
                                 if pt_result and pt_result.get("success"):
                                     print(f"      [PAPER TRADE] Auto-created: {pt_result['trade_id']}")
-                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
-                                                f"Execution planned: {exec_dec} ({action}). "
-                                                f"SL: {validated['stop_loss']}, Target: {validated['target_price']}",
-                                                confidence=execution_plan.get('confidence', 0))
+                                    print(f"      [AGENT 3] paper_trade_created=true")
+                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, old_action,
+                                                f"Execution planned: ENTER_NOW ({v2['direction']}). "
+                                                f"SL: {v2['stop_loss']}, Target: {v2['target_price']}",
+                                                confidence=old_conf)
                                 elif pt_result and not pt_result.get("success"):
-                                    # Paper trade creation failed — downgrade to retryable
-                                    print(f"      [PAPER TRADE] Failed: {pt_result.get('error', 'unknown')} — reverting signal to confirmed")
+                                    print(f"      [PAPER TRADE] Failed: {pt_result.get('error', 'unknown')}")
+                                    print(f"      [AGENT 3] paper_trade_created=false")
                                     sig.execution_status = "skipped"
                                     sig.status = "confirmed"
-                                    summary["planned"] -= 1  # Undo the planned count
+                                    summary["planned"] -= 1
                                     summary["skipped"] += 1
-                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
-                                                f"Execution skipped: paper trade creation failed — {pt_result.get('error', 'unknown')}",
-                                                confidence=execution_plan.get('confidence', 0))
+                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, old_action,
+                                                f"Execution skipped: paper trade creation failed",
+                                                confidence=old_conf)
                                 else:
-                                    # pt_result is None — not an ENTER NOW or missing fields (already guarded)
-                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
-                                                f"Execution planned: {exec_dec} ({action}). "
-                                                f"SL: {validated['stop_loss']}, Target: {validated['target_price']}",
-                                                confidence=execution_plan.get('confidence', 0))
+                                    _log_action(db, "Agent 3 (Execution)", sig.symbol, old_action,
+                                                f"Execution planned: ENTER_NOW ({v2['direction']}). "
+                                                f"SL: {v2['stop_loss']}, Target: {v2['target_price']}",
+                                                confidence=old_conf)
+
+                        elif v2_action in ("WAIT_FOR_PULLBACK", "WAIT_FOR_BREAKOUT"):
+                            sig.execution_status = "waiting"
+                            sig.status = "confirmed"  # Retryable
+                            summary["avoided"] += 1
+                            print(f"      [AGENT 3] waiting={v2_action}: {v2['reason']}")
+                            _log_action(db, "Agent 3 (Execution)", sig.symbol, "WAIT",
+                                        f"Execution waiting: {v2_action} — {v2['reason']}",
+                                        confidence=old_conf)
+
+                        elif v2_action == "AVOID":
+                            sig.execution_status = "skipped"
+                            sig.status = "invalidated"
+                            summary["avoided"] += 1
+                            print(f"      [AGENT 3] avoided: {v2['reason']}")
+                            _log_action(db, "Agent 3 (Execution)", sig.symbol, "AVOID",
+                                        f"Execution avoided: {v2['reason']}",
+                                        confidence=old_conf)
 
                         else:
-                            # Unknown decision — treat as avoided
+                            # Unknown V2 action — treat as avoided
                             sig.execution_status = "skipped"
                             sig.status = "confirmed"
                             summary["avoided"] += 1
-                            _log_action(db, "Agent 3 (Execution)", sig.symbol, action,
-                                        f"Execution avoided: unrecognized decision '{exec_dec}'",
-                                        confidence=execution_plan.get('confidence', 0))
+                            _log_action(db, "Agent 3 (Execution)", sig.symbol, old_action,
+                                        f"Execution avoided: unrecognized v2 action '{v2_action}'",
+                                        confidence=old_conf)
 
                         results.append({
                             "signal_id": sig.id,
                             "symbol": sig.symbol,
-                            "action": action,
-                            "execution_decision": exec_dec,
-                            "confidence": execution_plan.get("confidence", 0),
-                            "why": execution_plan.get("why_now_or_why_wait", "")
+                            "v2_action": v2_action,
+                            "direction": v2["direction"],
+                            "trade_mode": v2["trade_mode"],
+                            "confidence": v2["confidence"],
+                            "reason": v2["reason"],
+                            # Legacy compat for API consumers
+                            "action": old_action,
+                            "execution_decision": execution_plan.get("execution_decision", ""),
                         })
 
-                        # Commit at signal boundary — each signal is a clean transaction
                         db.commit()
 
                     except Exception as e:
@@ -428,8 +509,6 @@ def run_execution_planner(db: Session = None) -> dict:
                         print(f"      [ERROR] Failed to process execution result for {sig.symbol}: {e}")
                         traceback.print_exc()
                         summary["skipped"] += 1
-                traceback.print_exc()
-                summary["skipped"] += 1
 
         duration = _now_ms() - started_at
         

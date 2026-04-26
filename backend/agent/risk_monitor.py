@@ -185,13 +185,13 @@ def _log_decision(
     triggered = result.get("triggered_factors", result.get("triggered_rules", []))
 
     mins = int(time_in_trade // 60)
-    sl_change = f"₹{old_sl:.2f} -> ₹{new_sl:.2f}" if new_sl else f"₹{old_sl:.2f} (unchanged)"
+    sl_change = f"Rs.{old_sl:.2f} -> Rs.{new_sl:.2f}" if new_sl else f"Rs.{old_sl:.2f} (unchanged)"
 
-    print(f"\n{'─'*60}")
+    print(f"\n{'-'*60}")
     print(f" [AGENT 4: RISK MONITOR — {decision_source.upper()}]")
     print(f"   Symbol:      {symbol}")
-    print(f"   LTP:         ₹{ltp:.2f} (Entry: ₹{entry:.2f})")
-    print(f"   PnL:         {pnl_pct:+.1f}% (₹{pnl_rupees_total:+.0f})")
+    print(f"   LTP:         Rs.{ltp:.2f} (Entry: Rs.{entry:.2f})")
+    print(f"   PnL:         {pnl_pct:+.1f}% (Rs.{pnl_rupees_total:+.0f})")
     print(f"   MFE/MAE:     +{mfe_pct:.1f}% / {mae_pct:.1f}%")
     print(f"   Time:        {mins} mins")
     print(f"   Decision:    >> {decision} <<  [conf={confidence}, thesis={thesis}, urgency={urgency}]")
@@ -202,7 +202,7 @@ def _log_decision(
     print(f"   Validation:  {validation_status}")
     if overrides:
         print(f"   Overrides:   {overrides}")
-    print(f"{'─'*60}\n")
+    print(f"{'-'*60}\n")
 
     # Also log to Python logger for file-based audit
     logger.info(
@@ -313,6 +313,23 @@ def run_risk_monitor(db: Session = None, force: bool = False) -> dict:
                 trade.updated_at = _now_ms()
                 new_sl = result.get("updated_stop_loss")
                 ltp = result.get("_features_snapshot", {}).get("ltp") or trade.current_price
+
+                # ── MARK-TO-MARKET UPDATE: update live price + PnL every risk cycle ──
+                if ltp is not None and ltp > 0:
+                    trade.current_price = round(float(ltp), 2)
+
+                    if trade.action == "BUY":
+                        trade.pnl = round((trade.current_price - trade.entry_price) * trade.quantity, 2)
+                        trade.pnl_percent = round(
+                            ((trade.current_price - trade.entry_price) / trade.entry_price) * 100,
+                            2
+                        ) if trade.entry_price else 0.0
+                    else:
+                        trade.pnl = round((trade.entry_price - trade.current_price) * trade.quantity, 2)
+                        trade.pnl_percent = round(
+                            ((trade.entry_price - trade.current_price) / trade.entry_price) * 100,
+                            2
+                        ) if trade.entry_price else 0.0
 
                 # ── EXIT_NOW: close the entire position immediately ───────
                 if decision == "EXIT_NOW":

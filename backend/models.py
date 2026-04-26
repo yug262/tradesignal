@@ -23,6 +23,19 @@ class NewsArticleRef(BaseModel):
     affected_symbols: Optional[List[str]] = []
     processing_status: str
     raw_analysis_data: Any = None
+    link: Optional[str] = None
+    market_bias: Optional[str] = None
+    signal_bucket: Optional[str] = None
+    primary_symbol: Optional[str] = None
+    affected_sectors: Optional[List[str]] = []
+    affected_stocks: Optional[Any] = None
+    raw_full_data: Optional[Any] = None
+    news_impact_level: Optional[str] = None
+    news_reason: Optional[str] = None
+    event_id: Optional[str] = None
+    event_title: Optional[str] = None
+    confidence: Optional[int] = 0
+    horizon: Optional[str] = None
 
 
 class SystemConfig(BaseModel):
@@ -31,7 +44,7 @@ class SystemConfig(BaseModel):
     max_open_positions: int = 5
     max_daily_loss_pct: float = 3.0
     min_rr: float = 1.5
-    news_endpoint_url: str = "https://destiny-luxury-douche.ngrok-free.dev/api/indian_news?limit=1000&today_only=false&exclude_noisy=false&analyzed_only=false&offset=0"
+    news_endpoint_url: str = "https://destiny-luxury-douche.ngrok-free.dev/api/indian_news?limit=1000&today_only=false&exclude_noisy=true&analyzed_only=true&offset=0"
     polling_interval_mins: int = 5
     processing_mode: str = "pre_market"
     # Agent 3 position-sizing / risk boundaries

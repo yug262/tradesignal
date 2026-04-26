@@ -18,6 +18,19 @@ class NewsArticle(Base):
     affected_symbols = Column(ARRAY(String), default=[])
     processing_status = Column(String)
     raw_analysis_data = Column(JSON, nullable=True)
+    link = Column(String, nullable=True)
+    market_bias = Column(String, nullable=True)
+    signal_bucket = Column(String, nullable=True)
+    primary_symbol = Column(String, nullable=True)
+    affected_sectors = Column(ARRAY(String), default=[])
+    affected_stocks = Column(JSON, nullable=True)
+    raw_full_data = Column(JSON, nullable=True)
+    news_impact_level = Column(String, nullable=True)
+    news_reason = Column(String, nullable=True)
+    event_id = Column(String, nullable=True)
+    event_title = Column(String, nullable=True)
+    confidence = Column(Integer, default=0)
+    horizon = Column(String, nullable=True)
 
 class DBSystemConfig(Base):
     __tablename__ = "system_config"
@@ -73,6 +86,8 @@ class DBTradeSignal(Base):
     risk_monitor_status = Column(String, nullable=True)       # HOLD | HOLD_WITH_CAUTION | TIGHTEN_STOPLOSS | PARTIAL_EXIT | EXIT_NOW
     risk_monitor_data = Column(JSON, nullable=True)           # Full risk monitor output JSON
     risk_last_checked_at = Column(BigInteger, nullable=True)  # Timestamp of last risk check
+    # -- Agent 1 structured reasoning (added for combined_view.reasoning persistence) --
+    agent_1_reasoning = Column(JSON, nullable=True)           # {why_agent_gave_this_view, main_driver, supporting_points, risk_points, confidence_reason, what_agent_2_should_validate}
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PAPER TRADING MODELS
