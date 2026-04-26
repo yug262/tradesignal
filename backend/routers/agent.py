@@ -376,3 +376,161 @@ def get_agent_status(db: Session = Depends(get_db)):
         },
         "scheduler": sched_status,
     }
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# LIVE NEWS AGENT ENDPOINTS  (intraday, every-minute monitor)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@router.post("/live-news/run")
+def trigger_live_news_monitor():
+    """Manually trigger one cycle of the Live News Monitor (Agent 1+2 intraday).
+
+    Normally runs every 60 seconds automatically during market hours.
+    Use this to manually trigger a cycle for testing or on-demand analysis.
+    """
+    from agent.live_news_agent import run_live_news_monitor
+    result = run_live_news_monitor()
+    return result
+
+
+@router.get("/live-news/events")
+def get_live_news_events(
+    date: str = Query(default=None, description="Market date YYYY-MM-DD, defaults to today"),
+    symbol: str = Query(default=None, description="Filter by symbol (e.g. TCS)"),
+    only_trades: bool = Query(default=False, description="If true, only return events where should_trade=True"),
+    limit: int = Query(default=50, description="Max events to return (newest first)"),
+    db: Session = Depends(get_db),
+):
+    """Fetch live intraday news analysis events stored by the Live News Monitor.
+
+    Each event contains the Gemini analysis: what_happened, what_is_confirmed,
+    why_news_matters, market_bias, trading_thesis, invalidation_logic,
+    market_reacted, reaction_magnitude_pct, remaining_move_estimate,
+    should_trade, trade_reason, confidence.
+    """
+    if not date:
+        date = datetime.now(IST).strftime("%Y-%m-%d")
+
+    query = (
+        db.query(db_models.DBLiveNewsEvent)
+        .filter(db_models.DBLiveNewsEvent.market_date == date)
+    )
+
+    if symbol:
+        query = query.filter(db_models.DBLiveNewsEvent.symbol == symbol.upper())
+
+    if only_trades:
+        query = query.filter(db_models.DBLiveNewsEvent.should_trade == True)
+
+    events = (
+        query
+        .order_by(db_models.DBLiveNewsEvent.triggered_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    total = query.count()
+    trade_signals = sum(1 for e in events if e.should_trade)
+    agent3_count = sum(1 for e in events if e.agent3_triggered)
+
+    def _fmt(e: db_models.DBLiveNewsEvent) -> dict:
+        g = e.gemini_output or {}
+        t_time = None
+        if e.triggered_at:
+            t_time = datetime.fromtimestamp(e.triggered_at / 1000, tz=IST).strftime("%H:%M:%S IST")
+        return {
+            "id": e.id,
+            "symbol": e.symbol,
+            "triggered_at": e.triggered_at,
+            "triggered_time": t_time,
+            "market_date": e.market_date,
+            "current_price": e.current_price,
+            "publish_time_price": e.publish_time_price,
+            "news_ids": e.news_ids or [],
+            "should_trade": e.should_trade,
+            "confidence": e.confidence,
+            "agent3_triggered": e.agent3_triggered,
+            "what_happened": g.get("what_happened", ""),
+            "what_is_confirmed": g.get("what_is_confirmed", ""),
+            "why_news_matters": g.get("why_news_matters", ""),
+            "market_bias": g.get("market_bias", "NEUTRAL"),
+            "trading_thesis": g.get("trading_thesis", ""),
+            "invalidation_logic": g.get("invalidation_logic", ""),
+            "market_reacted": g.get("market_reacted", False),
+            "reaction_magnitude_pct": g.get("reaction_magnitude_pct", 0.0),
+            "remaining_move_estimate": g.get("remaining_move_estimate", ""),
+            "trade_reason": g.get("trade_reason", ""),
+            "gemini_source": g.get("_source", "unknown"),
+        }
+
+    return {
+        "market_date": date,
+        "total_events": total,
+        "shown": len(events),
+        "summary": {
+            "trade_signals": trade_signals,
+            "agent3_triggered": agent3_count,
+            "no_trade": len(events) - trade_signals,
+        },
+        "events": [_fmt(e) for e in events],
+    }
+
+
+@router.get("/live-news/latest/{symbol}")
+def get_latest_live_event_for_symbol(
+    symbol: str,
+    db: Session = Depends(get_db),
+):
+    """Get the most recent live news analysis event for a specific symbol (today)."""
+    today = datetime.now(IST).strftime("%Y-%m-%d")
+
+    event = (
+        db.query(db_models.DBLiveNewsEvent)
+        .filter(db_models.DBLiveNewsEvent.symbol == symbol.upper())
+        .filter(db_models.DBLiveNewsEvent.market_date == today)
+        .order_by(db_models.DBLiveNewsEvent.triggered_at.desc())
+        .first()
+    )
+
+    if not event:
+        return {
+            "found": False,
+            "symbol": symbol.upper(),
+            "market_date": today,
+            "message": "No live news events found for this symbol today.",
+        }
+
+    g = event.gemini_output or {}
+    t_time = datetime.fromtimestamp(
+        event.triggered_at / 1000, tz=IST
+    ).strftime("%H:%M:%S IST") if event.triggered_at else None
+
+    return {
+        "found": True,
+        "id": event.id,
+        "symbol": event.symbol,
+        "triggered_at": event.triggered_at,
+        "triggered_time": t_time,
+        "market_date": event.market_date,
+        "current_price": event.current_price,
+        "publish_time_price": event.publish_time_price,
+        "news_ids": event.news_ids or [],
+        "should_trade": event.should_trade,
+        "confidence": event.confidence,
+        "agent3_triggered": event.agent3_triggered,
+        "analysis": {
+            "what_happened": g.get("what_happened", ""),
+            "what_is_confirmed": g.get("what_is_confirmed", ""),
+            "why_news_matters": g.get("why_news_matters", ""),
+            "market_bias": g.get("market_bias", "NEUTRAL"),
+            "trading_thesis": g.get("trading_thesis", ""),
+            "invalidation_logic": g.get("invalidation_logic", ""),
+            "market_reacted": g.get("market_reacted", False),
+            "reaction_magnitude_pct": g.get("reaction_magnitude_pct", 0.0),
+            "remaining_move_estimate": g.get("remaining_move_estimate", ""),
+            "trade_reason": g.get("trade_reason", ""),
+            "confidence": g.get("confidence", 0),
+            "gemini_source": g.get("_source", "unknown"),
+        },
+    }

@@ -10,3 +10,6 @@ apscheduler>=3.10.0
 pytz>=2024.1
 TA-Lib>=0.4.24
 numpy>=2.0.0
+matplotlib>=3.8.0
+mplfinance>=0.12.10b0
+pandas>=2.0.0

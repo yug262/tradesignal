@@ -179,3 +179,20 @@ class DBIndicatorData(Base):
     timestamps = Column(ARRAY(BigInteger), default=[])     # Array of ms epochs
     values = Column(ARRAY(Float), default=[])              # Array of calculated values
     updated_at = Column(BigInteger, nullable=False)
+
+
+class DBLiveNewsEvent(Base):
+    """Live intraday news analysis results — one row per symbol per news batch."""
+    __tablename__ = "live_news_events"
+    id = Column(String, primary_key=True, index=True)      # "live-{symbol}-{ts_ms}"
+    symbol = Column(String, nullable=False, index=True)
+    news_ids = Column(JSON, default=[])                    # List of article IDs analyzed
+    triggered_at = Column(BigInteger, nullable=False)      # When the live agent ran (ms epoch)
+    current_price = Column(Float, nullable=True)           # Live LTP at analysis time
+    publish_time_price = Column(Float, nullable=True)      # LTP at news publish time (if found)
+    gemini_output = Column(JSON, nullable=True)            # Full analyzer output dict
+    should_trade = Column(Boolean, default=False)          # Gemini says there's alpha
+    confidence = Column(Float, default=0.0)                # Gemini confidence 0-100
+    agent3_triggered = Column(Boolean, default=False)      # Whether Agent 3 was queued
+    market_date = Column(String, nullable=True, index=True)  # YYYY-MM-DD
+    created_at = Column(BigInteger, nullable=False)
