@@ -1,9 +1,10 @@
-import { useEffect, useState, useCallback } from "react";
+import React, { useEffect, useState, useCallback } from "react";
 import { createFileRoute } from "@tanstack/react-router";
 import { api } from "@/backend";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Button } from "@/components/ui/button";
+import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { cn } from "@/lib/utils";
 import {
   Brain,
@@ -22,17 +23,17 @@ import {
   Zap,
   TrendingUp,
   Info,
+  Target,
+  FileText,
+  HelpCircle,
 } from "lucide-react";
+import type { DiscoveryOutput } from "@/types/trading";
 
 export const Route = createFileRoute("/agent-signals")({
   component: AgentSignalsPage,
 });
 
 // ── Discovery Layer — Agent 1 ─────────────────────────────────────────────────
-// This page shows the output of the Discovery layer.
-// It does NOT show direction bias, gap expectations, or trade preferences.
-// Those fields no longer exist in the Discovery schema.
-// Agent 2 (market-open page) adds direction after validating the open.
 
 function AgentSignalsPage() {
   const [data, setData] = useState<any>(null);
@@ -75,54 +76,58 @@ function AgentSignalsPage() {
   };
 
   const signals = data?.signals || [];
-  // New summary shape: watch, ignore, stale, strong, moderate, weak
   const summary = data?.signals_summary || {
     watch: 0, ignore: 0, stale: 0, strong: 0, moderate: 0, weak: 0,
   };
 
-  // Filter by final_verdict (new Discovery schema)
+  // Filter logic
   const filtered = signals.filter((s: any) => {
-    const verdict = (s.reasoning?.final_verdict || "").toUpperCase();
+    const isWatch = s.signal_type === "WATCH";
     if (filter === "ALL") return true;
-    if (filter === "IMPORTANT") return verdict === "IMPORTANT_EVENT";
-    if (filter === "MODERATE") return verdict === "MODERATE_EVENT";
-    if (filter === "MINOR") return verdict === "MINOR_EVENT";
-    if (filter === "NOISE") return verdict === "NOISE";
+    if (filter === "WATCH") return isWatch;
+    if (filter === "IGNORE") return !isWatch;
     return true;
   });
 
-  const confidenceColor = (conf: number) => {
-    if (conf >= 80) return "text-emerald-400";
-    if (conf >= 60) return "text-amber-400";
-    if (conf >= 40) return "text-orange-400";
-    return "text-red-400";
+  // ── Styling Helpers ────────────────────────────────────────────────────────
+
+  const confidenceColor = (conf: string) => {
+    const c = (conf || "LOW").toUpperCase();
+    if (c === "HIGH") return "text-emerald-400";
+    if (c === "MEDIUM") return "text-amber-400";
+    return "text-zinc-500";
   };
 
-  // Verdict badge — replaces old decision badge
-  const verdictBadge = (verdict: string) => {
-    const v = (verdict || "").toUpperCase();
-    if (v === "IMPORTANT_EVENT")
-      return <Badge variant="outline" className="font-mono text-[9px] border-emerald-500/30 text-emerald-400 bg-emerald-500/5"><CheckCircle2 size={10} className="mr-1" />IMPORTANT</Badge>;
-    if (v === "MODERATE_EVENT")
-      return <Badge variant="outline" className="font-mono text-[9px] border-amber-500/30 text-amber-400 bg-amber-500/5"><Info size={10} className="mr-1" />MODERATE</Badge>;
-    if (v === "MINOR_EVENT")
-      return <Badge variant="outline" className="font-mono text-[9px] border-blue-500/30 text-blue-400 bg-blue-500/5"><Minus size={10} className="mr-1" />MINOR</Badge>;
-    return <Badge variant="outline" className="font-mono text-[9px] border-zinc-500/30 text-zinc-400 bg-zinc-500/5"><XCircle size={10} className="mr-1" />NOISE</Badge>;
+  const biasBadge = (bias: string) => {
+    const b = (bias || "NEUTRAL").toUpperCase();
+    if (b === "BULLISH") return <Badge variant="outline" className="font-mono text-[9px] border-emerald-500/30 text-emerald-400 bg-emerald-500/5">BULLISH</Badge>;
+    if (b === "BEARISH") return <Badge variant="outline" className="font-mono text-[9px] border-rose-500/30 text-rose-400 bg-rose-500/5">BEARISH</Badge>;
+    if (b === "MIXED") return <Badge variant="outline" className="font-mono text-[9px] border-amber-500/30 text-amber-400 bg-amber-500/5">MIXED</Badge>;
+    return <Badge variant="outline" className="font-mono text-[9px] border-zinc-500/30 text-zinc-400 bg-zinc-500/5">NEUTRAL</Badge>;
   };
 
-  const strengthBadge = (strength: string) => {
-    const s = (strength || "").toUpperCase();
-    if (s === "STRONG") return <Badge variant="outline" className="font-mono text-[9px] border-red-500/30 text-red-400 bg-red-500/5">STRONG</Badge>;
-    if (s === "MODERATE") return <Badge variant="outline" className="font-mono text-[9px] border-amber-500/30 text-amber-400 bg-amber-500/5">MODERATE</Badge>;
-    return <Badge variant="outline" className="font-mono text-[9px] border-border text-muted-foreground">WEAK</Badge>;
+  const verdictBadge = (isWatch: boolean, confidence: string) => {
+    if (isWatch) {
+      return (
+        <Badge variant="outline" className="font-mono text-[9px] border-emerald-500/30 text-emerald-400 bg-emerald-500/5">
+          <CheckCircle2 size={10} className="mr-1" />
+          {confidence === "HIGH" ? "IMPORTANT" : "WATCH"}
+        </Badge>
+      );
+    }
+    return (
+      <Badge variant="outline" className="font-mono text-[9px] border-zinc-500/30 text-zinc-400 bg-zinc-500/5">
+        <XCircle size={10} className="mr-1" />
+        NOISE
+      </Badge>
+    );
   };
 
-  const freshnessBadge = (freshness: string) => {
-    const f = (freshness || "").toUpperCase();
-    if (f === "FRESH") return <span className="font-mono text-[9px] text-emerald-400">↻ FRESH</span>;
-    if (f === "SLIGHTLY_OLD") return <span className="font-mono text-[9px] text-amber-400">↻ SLIGHTLY OLD</span>;
-    if (f === "OLD") return <span className="font-mono text-[9px] text-zinc-400">↻ OLD</span>;
-    return <span className="font-mono text-[9px] text-zinc-500">↻ REPEATED</span>;
+  const confidenceBadge = (conf: string) => {
+    const c = (conf || "LOW").toUpperCase();
+    if (c === "HIGH") return <Badge variant="outline" className="font-mono text-[9px] border-primary/30 text-primary bg-primary/5">HIGH CONF</Badge>;
+    if (c === "MEDIUM") return <Badge variant="outline" className="font-mono text-[9px] border-amber-500/30 text-amber-400 bg-amber-500/5">MEDIUM CONF</Badge>;
+    return <Badge variant="outline" className="font-mono text-[9px] border-border text-muted-foreground">LOW CONF</Badge>;
   };
 
   return (
@@ -165,21 +170,11 @@ function AgentSignalsPage() {
         </div>
       </div>
 
-      {/* Context note */}
-      <div className="bg-primary/5 border border-primary/20 rounded-lg p-3">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          <strong>Discovery Layer:</strong> Agent 1 reads recent news and explains what actually happened.
-          It does <strong>not</strong> predict direction or give trade advice.
-          Agent 2 (Market Open) validates the thesis against live data at 9:20 AM.
-        </p>
-      </div>
-
-      {/* Summary Cards — aligned with new schema */}
+      {/* Summary Cards */}
       <div className="grid grid-cols-3 md:grid-cols-6 gap-3">
         {[
-          { label: "WATCH", count: summary.watch, icon: <Eye size={16} />, color: "text-emerald-400", bg: "bg-emerald-500/5 border-emerald-500/20", filterKey: "IMPORTANT" },
-          { label: "IGNORE", count: summary.ignore, icon: <Minus size={16} />, color: "text-zinc-400", bg: "bg-zinc-500/5 border-zinc-500/20", filterKey: "MINOR" },
-          { label: "NOISE", count: summary.stale, icon: <XCircle size={16} />, color: "text-zinc-500", bg: "bg-zinc-500/5 border-zinc-500/20", filterKey: "NOISE" },
+          { label: "WATCH", count: summary.watch, icon: <Eye size={16} />, color: "text-emerald-400", bg: "bg-emerald-500/5 border-emerald-500/20", filterKey: "WATCH" },
+          { label: "IGNORE", count: summary.ignore, icon: <Minus size={16} />, color: "text-zinc-400", bg: "bg-zinc-500/5 border-zinc-500/20", filterKey: "IGNORE" },
           { label: "STRONG ⚡", count: summary.strong, icon: <Zap size={16} />, color: "text-red-400", bg: "bg-red-500/5 border-red-500/20", filterKey: "ALL" },
           { label: "MODERATE", count: summary.moderate, icon: <TrendingUp size={16} />, color: "text-amber-400", bg: "bg-amber-500/5 border-amber-500/20", filterKey: "ALL" },
           { label: "WEAK", count: summary.weak, icon: <Minus size={16} />, color: "text-zinc-500", bg: "bg-zinc-500/5 border-zinc-500/20", filterKey: "ALL" },
@@ -198,30 +193,6 @@ function AgentSignalsPage() {
         ))}
       </div>
 
-      {/* Filters */}
-      <div className="flex items-center gap-4 flex-wrap">
-        <div className="flex items-center gap-2">
-          <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest mr-1">Verdict:</span>
-          {["ALL", "IMPORTANT", "MODERATE", "MINOR", "NOISE"].map((m) => (
-            <Badge
-              key={m} variant="outline"
-              className={cn(
-                "font-mono text-[9px] px-2 py-0.5 cursor-pointer transition-all",
-                filter === m
-                  ? "bg-primary/10 border-primary/30 text-primary"
-                  : "border-border text-muted-foreground hover:border-primary/30"
-              )}
-              onClick={() => setFilter(m)}
-            >
-              {m}
-            </Badge>
-          ))}
-        </div>
-        <span className="font-mono text-[9px] text-muted-foreground ml-auto">
-          Showing {filtered.length} of {signals.length} assessments
-        </span>
-      </div>
-
       {/* Signal Cards */}
       {loading ? (
         <div className="space-y-3">
@@ -232,7 +203,6 @@ function AgentSignalsPage() {
                 <Skeleton className="h-5 w-20" />
               </div>
               <Skeleton className="h-4 w-full" />
-              <Skeleton className="h-4 w-3/4" />
             </div>
           ))}
         </div>
@@ -240,34 +210,31 @@ function AgentSignalsPage() {
         <div className="bg-card border border-border rounded-lg p-12 text-center space-y-3">
           <Brain size={32} className="mx-auto text-muted-foreground opacity-20" />
           <p className="font-mono text-xs text-muted-foreground">No assessments generated yet</p>
-          <p className="font-mono text-[10px] text-muted-foreground opacity-50">
-            Click "Run Discovery Scan" to analyze overnight news
-          </p>
         </div>
       ) : (
         <div className="space-y-3">
           {filtered.map((sig: any) => {
             const isExpanded = expandedId === sig.id;
-            const r = sig.reasoning || {};
+            const r = (sig.reasoning as DiscoveryOutput) || null;
+            const cv = r?.combined_view || {};
+            const rsn = cv?.reasoning || {};
             const snapshot = sig.stock_snapshot || {};
-            const verdict = (r.final_verdict || "NOISE").toUpperCase();
-            const isImportant = verdict === "IMPORTANT_EVENT";
+            const isWatch = sig.signal_type === "WATCH";
 
             return (
               <div
                 key={sig.id}
                 className={cn(
                   "bg-card border rounded-lg overflow-hidden transition-all",
-                  !isImportant ? "opacity-70 border-border" : "border-border"
+                  !isWatch ? "opacity-70 border-border" : "border-border"
                 )}
               >
-                {/* Main Row */}
+                {/* Main Row (Compact) */}
                 <div
                   className="p-4 cursor-pointer hover:bg-secondary/30 transition-colors"
                   onClick={() => setExpandedId(isExpanded ? null : sig.id)}
                 >
                   <div className="flex items-center justify-between flex-wrap gap-3">
-                    {/* Left: Symbol + Verdict */}
                     <div className="flex items-center gap-3">
                       <div className="flex items-center justify-center w-8 h-8 rounded border border-border bg-secondary">
                         <Newspaper size={14} className="text-muted-foreground" />
@@ -275,31 +242,22 @@ function AgentSignalsPage() {
                       <div>
                         <h3 className="font-bold text-sm text-foreground tracking-tight">{sig.symbol}</h3>
                         <div className="font-mono text-[9px] uppercase tracking-widest text-muted-foreground">
-                          {r.event_type?.replace("_", " ") || "other"} · {r.directness || "—"}
+                          {r?.news_analysis?.[0]?.event_type?.replace("_", " ") || "other"} · {cv?.final_confidence || "—"}
                         </div>
                       </div>
-                      {verdictBadge(r.final_verdict)}
-                      {strengthBadge(r.event_strength)}
-                      {r.is_material && (
-                        <Badge variant="outline" className="font-mono text-[9px] border-primary/30 text-primary bg-primary/5">
-                          MATERIAL
-                        </Badge>
-                      )}
+                      {verdictBadge(isWatch, cv?.final_confidence)}
+                      {biasBadge(cv?.final_bias)}
+                      {confidenceBadge(cv?.final_confidence)}
                     </div>
 
-                    {/* Right: Confidence + Event Strength + Freshness */}
                     <div className="flex items-center gap-5">
                       <div className="text-center">
-                        <div className={cn("text-lg font-bold font-mono tabular-nums", confidenceColor(sig.confidence || 0))}>
-                          {sig.confidence || 0}%
+                        <div className={cn("text-lg font-bold font-mono tabular-nums", confidenceColor(cv?.final_confidence))}>
+                          {cv?.final_confidence === "HIGH" ? "80%" : (cv?.final_confidence === "MEDIUM" ? "55%" : "20%")}
                         </div>
                         <div className="font-mono text-[7px] text-muted-foreground uppercase tracking-widest">Confidence</div>
                       </div>
                       <div className="hidden sm:flex gap-4">
-                        <div className="text-right">
-                          <div className="font-mono text-[8px] text-muted-foreground uppercase tracking-widest">Freshness</div>
-                          <div>{freshnessBadge(r.freshness)}</div>
-                        </div>
                         <div className="text-right">
                           <div className="font-mono text-[8px] text-muted-foreground uppercase tracking-widest">Prev Close</div>
                           <div className="font-mono text-xs text-foreground tabular-nums">
@@ -313,77 +271,87 @@ function AgentSignalsPage() {
                     </div>
                   </div>
 
-                  {/* Event Summary (always visible) */}
-                  {r.event_summary && (
-                    <p className="text-xs text-muted-foreground mt-2 pl-11 leading-relaxed line-clamp-1">{r.event_summary}</p>
+                  {cv.executive_summary && (
+                    <p className="text-xs text-muted-foreground mt-2 pl-11 leading-relaxed line-clamp-1 italic">
+                      "{cv.executive_summary}"
+                    </p>
                   )}
                 </div>
 
-                {/* Expanded Details */}
+                {/* Expanded Details (Enhanced with all new fields) */}
                 {isExpanded && (
                   <div className="border-t border-border bg-secondary/20 p-4 space-y-4">
-                    {/* Impact Analysis */}
-                    {r.impact_analysis && (
-                      <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50">
-                        <div className="font-mono text-[9px] text-primary uppercase tracking-widest font-semibold mb-1">Business Impact</div>
-                        <p className="text-xs text-foreground leading-relaxed">{r.impact_analysis}</p>
+                    {/* Conflict Alert */}
+                    {cv.conflict_detected && (
+                      <div className="p-3 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-start gap-3">
+                        <AlertTriangle className="h-4 w-4 text-amber-500 mt-0.5 shrink-0" />
+                        <div className="space-y-1">
+                          <p className="text-[10px] font-bold text-amber-600 uppercase tracking-widest">Conflict Detected</p>
+                          <p className="text-xs text-muted-foreground leading-relaxed">{cv.conflict_reason}</p>
+                        </div>
                       </div>
                     )}
 
-                    {/* Detailed Explanation */}
-                    {r.detailed_explanation && (
-                      <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50">
-                        <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest font-semibold mb-1">Full Context</div>
-                        <p className="text-xs text-muted-foreground leading-relaxed">{r.detailed_explanation}</p>
-                      </div>
-                    )}
+                    {/* Main Content Area */}
+                    <Tabs defaultValue="thesis" className="w-full">
+                      <TabsList className="bg-background/50 h-8 p-1">
+                        <TabsTrigger value="thesis" className="text-[10px] uppercase h-6">Combined Thesis</TabsTrigger>
+                        <TabsTrigger value="articles" className="text-[10px] uppercase h-6">News Breakdown ({r.news_analysis?.length || 0})</TabsTrigger>
+                      </TabsList>
 
-                    {/* Positive Factors & Risks */}
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 border-t border-border/30">
-                      {r.key_positive_factors && r.key_positive_factors.length > 0 && (
-                        <div>
-                          <div className="font-mono text-[9px] text-emerald-400 uppercase tracking-widest mb-1 font-semibold">Positive Factors</div>
-                          <ul className="space-y-0.5">
-                            {r.key_positive_factors.map((c: string, i: number) => (
-                              <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
-                                <CheckCircle2 size={9} className="text-emerald-400 mt-0.5 shrink-0" />
-                                {c}
-                              </li>
+                      <TabsContent value="thesis" className="pt-4 space-y-4">
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                          <div className="space-y-4">
+                            <DetailBlock title="Main Driver" value={rsn?.main_driver} icon={<Zap size={10} className="text-primary" />} />
+                            <DetailBlock title="Trading Thesis" value={cv?.combined_trading_thesis} icon={<Target size={10} />} />
+                            <DetailBlock title="Invalidation" value={cv?.combined_invalidation} icon={<ShieldAlert size={10} className="text-rose-500" />} />
+                          </div>
+                          <div className="space-y-4">
+                            <ListBlock title="Supporting Points" items={rsn?.supporting_points} />
+                            <ListBlock title="Key Risks" items={cv?.key_risks} />
+                            <div className="p-3 rounded bg-background/50 border border-border/50">
+                              <h4 className="text-[9px] uppercase tracking-widest text-muted-foreground font-bold mb-1">Confidence Reason</h4>
+                              <p className="text-xs text-muted-foreground italic">"{rsn?.confidence_reason}"</p>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Validation Section */}
+                        <div className="p-3 rounded bg-primary/5 border border-primary/20">
+                          <h4 className="text-[9px] uppercase tracking-widest text-primary font-bold mb-2">Agent 2 Validation Directives</h4>
+                          <div className="flex flex-wrap gap-2">
+                            {rsn?.what_agent_2_should_validate?.map((v: string, i: number) => (
+                              <Badge key={i} variant="secondary" className="text-[9px] bg-background border-border/50 font-normal">
+                                {v}
+                              </Badge>
                             ))}
-                          </ul>
+                          </div>
                         </div>
-                      )}
-                      {r.key_risks && r.key_risks.length > 0 && (
-                        <div>
-                          <div className="font-mono text-[9px] text-red-400 uppercase tracking-widest mb-1 font-semibold">Risk Factors</div>
-                          <ul className="space-y-0.5">
-                            {r.key_risks.map((risk: string, i: number) => (
-                              <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
-                                <ShieldAlert size={9} className="text-red-400 mt-0.5 shrink-0" />
-                                {risk}
-                              </li>
-                            ))}
-                          </ul>
-                        </div>
-                      )}
-                    </div>
+                      </TabsContent>
 
-                    {/* Reasoning Summary */}
-                    {r.reasoning_summary && (
-                      <div className="pt-2 border-t border-border/30">
-                        <div className="bg-primary/5 border border-primary/20 rounded p-3">
-                          <div className="font-mono text-[9px] text-primary uppercase tracking-widest mb-1 font-semibold">Reasoning</div>
-                          <p className="text-xs text-foreground leading-relaxed">{r.reasoning_summary}</p>
-                        </div>
-                      </div>
-                    )}
+                      <TabsContent value="articles" className="pt-4 space-y-3">
+                        {r.news_analysis?.map((na, i) => (
+                          <div key={i} className="p-3 rounded border border-border/50 bg-background/30 space-y-2">
+                            <div className="flex items-center justify-between">
+                              <span className="text-[9px] font-bold text-muted-foreground uppercase tracking-widest flex items-center gap-1">
+                                <FileText size={10} /> Article #{na.news_number} · {na.event_type}
+                              </span>
+                              <Badge variant="outline" className="text-[8px] h-4">{na.importance} IMPORTANCE</Badge>
+                            </div>
+                            <p className="text-xs font-semibold">{na.what_happened}</p>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                              <ListBlock title="Confirmed Facts" items={na.confirmed_facts} compact />
+                              <ListBlock title="Unknowns" items={na.unknowns} compact />
+                            </div>
+                          </div>
+                        ))}
+                      </TabsContent>
+                    </Tabs>
 
-                    {/* Meta */}
-                    <div className="flex items-center gap-4 pt-2 border-t border-border/30 text-[9px] font-mono text-muted-foreground">
-                      <span>Articles: <span className="text-foreground">{sig.news_article_ids?.length || 0}</span></span>
-                      <span>Directness: <span className="text-foreground">{r.directness || "—"}</span></span>
-                      <span>Freshness: <span className="text-foreground">{r.freshness || "—"}</span></span>
-                      <span>Source: <span className="text-foreground">{r._source || "—"}</span></span>
+                    {/* Footer Meta */}
+                    <div className="flex items-center gap-4 pt-2 border-t border-border/30 text-[9px] font-mono text-muted-foreground opacity-50">
+                      <span>Articles: {sig.news_article_ids?.length || 0}</span>
+                      <span>Source: {r._source || "gemini"}</span>
                     </div>
                   </div>
                 )}
@@ -392,11 +360,36 @@ function AgentSignalsPage() {
           })}
         </div>
       )}
+    </div>
+  );
+}
 
-      {/* Footer */}
-      <div className="font-mono text-[9px] text-muted-foreground opacity-25 text-center tracking-widest pb-1 border-t border-border/20 pt-3 mt-6">
-        -- AGENT 1 · DISCOVERY LAYER · NEWS UNDERSTANDING ENGINE --
+// ── Helpers ──────────────────────────────────────────────────────────────────
+
+function DetailBlock({ title, value, icon }: { title: string; value?: string; icon?: React.ReactNode }) {
+  return (
+    <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50">
+      <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest font-semibold flex items-center gap-1.5">
+        {icon} {title}
       </div>
+      <p className="text-xs text-foreground leading-relaxed">{value || "—"}</p>
+    </div>
+  );
+}
+
+function ListBlock({ title, items, compact }: { title: string; items?: string[]; compact?: boolean }) {
+  if (!items || items.length === 0) return null;
+  return (
+    <div className={cn("space-y-1.5", !compact && "bg-background/50 p-3 rounded border border-border/50")}>
+      <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">{title}</div>
+      <ul className="space-y-1">
+        {items.map((item, i) => (
+          <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+            <span className="text-primary mt-0.5">•</span>
+            {item}
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
