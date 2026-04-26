@@ -10,6 +10,7 @@
 
 import { Route as rootRouteImport } from './routes/__root'
 import { Route as TradePlannerRouteImport } from './routes/trade-planner'
+import { Route as TechnicalAnalysisRouteImport } from './routes/technical-analysis'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PaperTradingRouteImport } from './routes/paper-trading'
 import { Route as OpportunitiesRouteImport } from './routes/opportunities'
@@ -21,13 +22,17 @@ import { Route as JournalRouteImport } from './routes/journal'
 import { Route as GroupingRouteImport } from './routes/grouping'
 import { Route as ExecutionPlannerRouteImport } from './routes/execution-planner'
 import { Route as AgentSignalsRouteImport } from './routes/agent-signals'
-import { Route as Agent1ResultsRouteImport } from './routes/agent-1-results'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as SymbolsSymbolIdRouteImport } from './routes/symbols.$symbolId'
 
 const TradePlannerRoute = TradePlannerRouteImport.update({
   id: '/trade-planner',
   path: '/trade-planner',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const TechnicalAnalysisRoute = TechnicalAnalysisRouteImport.update({
+  id: '/technical-analysis',
+  path: '/technical-analysis',
   getParentRoute: () => rootRouteImport,
 } as any)
 const SettingsRoute = SettingsRouteImport.update({
@@ -85,11 +90,6 @@ const AgentSignalsRoute = AgentSignalsRouteImport.update({
   path: '/agent-signals',
   getParentRoute: () => rootRouteImport,
 } as any)
-const Agent1ResultsRoute = Agent1ResultsRouteImport.update({
-  id: '/agent-1-results',
-  path: '/agent-1-results',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const IndexRoute = IndexRouteImport.update({
   id: '/',
   path: '/',
@@ -103,7 +103,6 @@ const SymbolsSymbolIdRoute = SymbolsSymbolIdRouteImport.update({
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
-  '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
   '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
@@ -115,12 +114,12 @@ export interface FileRoutesByFullPath {
   '/opportunities': typeof OpportunitiesRoute
   '/paper-trading': typeof PaperTradingRoute
   '/settings': typeof SettingsRoute
+  '/technical-analysis': typeof TechnicalAnalysisRoute
   '/trade-planner': typeof TradePlannerRoute
   '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
   '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
@@ -132,13 +131,13 @@ export interface FileRoutesByTo {
   '/opportunities': typeof OpportunitiesRoute
   '/paper-trading': typeof PaperTradingRoute
   '/settings': typeof SettingsRoute
+  '/technical-analysis': typeof TechnicalAnalysisRoute
   '/trade-planner': typeof TradePlannerRoute
   '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
-  '/agent-1-results': typeof Agent1ResultsRoute
   '/agent-signals': typeof AgentSignalsRoute
   '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
@@ -150,6 +149,7 @@ export interface FileRoutesById {
   '/opportunities': typeof OpportunitiesRoute
   '/paper-trading': typeof PaperTradingRoute
   '/settings': typeof SettingsRoute
+  '/technical-analysis': typeof TechnicalAnalysisRoute
   '/trade-planner': typeof TradePlannerRoute
   '/symbols/$symbolId': typeof SymbolsSymbolIdRoute
 }
@@ -157,7 +157,6 @@ export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
   fullPaths:
     | '/'
-    | '/agent-1-results'
     | '/agent-signals'
     | '/execution-planner'
     | '/grouping'
@@ -169,12 +168,12 @@ export interface FileRouteTypes {
     | '/opportunities'
     | '/paper-trading'
     | '/settings'
+    | '/technical-analysis'
     | '/trade-planner'
     | '/symbols/$symbolId'
   fileRoutesByTo: FileRoutesByTo
   to:
     | '/'
-    | '/agent-1-results'
     | '/agent-signals'
     | '/execution-planner'
     | '/grouping'
@@ -186,12 +185,12 @@ export interface FileRouteTypes {
     | '/opportunities'
     | '/paper-trading'
     | '/settings'
+    | '/technical-analysis'
     | '/trade-planner'
     | '/symbols/$symbolId'
   id:
     | '__root__'
     | '/'
-    | '/agent-1-results'
     | '/agent-signals'
     | '/execution-planner'
     | '/grouping'
@@ -203,13 +202,13 @@ export interface FileRouteTypes {
     | '/opportunities'
     | '/paper-trading'
     | '/settings'
+    | '/technical-analysis'
     | '/trade-planner'
     | '/symbols/$symbolId'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
-  Agent1ResultsRoute: typeof Agent1ResultsRoute
   AgentSignalsRoute: typeof AgentSignalsRoute
   ExecutionPlannerRoute: typeof ExecutionPlannerRoute
   GroupingRoute: typeof GroupingRoute
@@ -221,6 +220,7 @@ export interface RootRouteChildren {
   OpportunitiesRoute: typeof OpportunitiesRoute
   PaperTradingRoute: typeof PaperTradingRoute
   SettingsRoute: typeof SettingsRoute
+  TechnicalAnalysisRoute: typeof TechnicalAnalysisRoute
   TradePlannerRoute: typeof TradePlannerRoute
   SymbolsSymbolIdRoute: typeof SymbolsSymbolIdRoute
 }
@@ -232,6 +232,13 @@ declare module '@tanstack/react-router' {
       path: '/trade-planner'
       fullPath: '/trade-planner'
       preLoaderRoute: typeof TradePlannerRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/technical-analysis': {
+      id: '/technical-analysis'
+      path: '/technical-analysis'
+      fullPath: '/technical-analysis'
+      preLoaderRoute: typeof TechnicalAnalysisRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/settings': {
@@ -311,13 +318,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AgentSignalsRouteImport
       parentRoute: typeof rootRouteImport
     }
-    '/agent-1-results': {
-      id: '/agent-1-results'
-      path: '/agent-1-results'
-      fullPath: '/agent-1-results'
-      preLoaderRoute: typeof Agent1ResultsRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/': {
       id: '/'
       path: '/'
@@ -337,7 +337,6 @@ declare module '@tanstack/react-router' {
 
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
-  Agent1ResultsRoute: Agent1ResultsRoute,
   AgentSignalsRoute: AgentSignalsRoute,
   ExecutionPlannerRoute: ExecutionPlannerRoute,
   GroupingRoute: GroupingRoute,
@@ -349,6 +348,7 @@ const rootRouteChildren: RootRouteChildren = {
   OpportunitiesRoute: OpportunitiesRoute,
   PaperTradingRoute: PaperTradingRoute,
   SettingsRoute: SettingsRoute,
+  TechnicalAnalysisRoute: TechnicalAnalysisRoute,
   TradePlannerRoute: TradePlannerRoute,
   SymbolsSymbolIdRoute: SymbolsSymbolIdRoute,
 }

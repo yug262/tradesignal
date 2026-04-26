@@ -45,6 +45,11 @@ const NAV_ITEMS: NavItem[] = [
     icon: <TrendingUp size={16} />,
   },
   {
+    path: "/technical-analysis",
+    label: "Technical Analysis (A2.5)",
+    icon: <BarChart3 size={16} />,
+  },
+  {
     path: "/execution-planner",
     label: "Execution Planner (A3)",
     icon: <ClipboardList size={16} />,
