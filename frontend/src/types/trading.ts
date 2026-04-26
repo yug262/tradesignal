@@ -7,16 +7,31 @@ export interface NewsArticleRef {
   description: string;
   source: string;
   published_at: number;       // milliseconds
-  analyzed_at: number;        // milliseconds
+  analyzed_at?: number | null; // milliseconds
   image_url?: string | null;
   impact_score: number;
-  impact_summary: string;
-  executive_summary: string;
-  news_relevance: string;
-  news_category: string;
+  impact_summary?: string | null;
+  executive_summary?: string | null;
+  news_relevance?: string | null;
+  news_category?: string | null;
   affected_symbols: string[];
   processing_status: string;
-  raw_analysis_data: string;
+  raw_analysis_data: any;
+  
+  // New AI intelligence fields
+  link?: string | null;
+  market_bias?: string | null;
+  signal_bucket?: string | null;
+  primary_symbol?: string | null;
+  affected_sectors?: string[];
+  affected_stocks?: any;
+  news_impact_level?: string | null;
+  news_reason?: string | null;
+  event_id?: string | null;
+  event_title?: string | null;
+  confidence?: number;
+  horizon?: string | null;
+  raw_full_data?: any;
 }
 
 export interface SystemConfig {
@@ -69,83 +84,115 @@ export interface PaginatedResponse<T> {
 
 // ── Agent 1 — Discovery Layer Output ────────────────────────────────────────
 // Answers: "What actually happened, and does it meaningfully matter?"
-// Does NOT contain direction bias, trade preference, or watchlist decisions.
 export interface DiscoveryOutput {
-  event_summary: string;
-  detailed_explanation: string;
-  event_type: "corporate_event" | "macro" | "sector" | "regulatory" | "other";
-  event_strength: "STRONG" | "MODERATE" | "WEAK";
-  freshness: "FRESH" | "SLIGHTLY_OLD" | "OLD" | "REPEATED";
-  directness: "DIRECT" | "INDIRECT" | "NONE";
-  is_material: boolean;
-  impact_analysis: string;
-  key_positive_factors: string[];
-  key_risks: string[];
-  confidence: number;            // 0-100
-  final_verdict: "IMPORTANT_EVENT" | "MODERATE_EVENT" | "MINOR_EVENT" | "NOISE";
-  reasoning_summary: string;
-  _source: string;
-  _model: string;
+  stock: {
+    symbol: string;
+    company_name: string | null;
+    exchange: string;
+  };
+  news_analysis: {
+    news_number: number;
+    event_type: string;
+    what_happened: string;
+    confirmed_facts: string[];
+    unknowns: string[];
+    importance: string;
+    importance_reason: string;
+    impact_mechanism: string;
+    bias: string;
+    trading_thesis: string;
+    invalidation: string;
+    confidence: string;
+  }[];
+  combined_view: {
+    final_bias: "BULLISH" | "BEARISH" | "MIXED" | "NEUTRAL";
+    final_confidence: "LOW" | "MEDIUM" | "HIGH";
+    executive_summary: string;
+    why_this_stock_is_important_today: string;
+    combined_trading_thesis: string;
+    combined_invalidation: string;
+    key_risks: string[];
+    conflict_detected: boolean;
+    conflict_reason: string;
+    reasoning: {
+      why_agent_gave_this_view: string;
+      main_driver: string;
+      supporting_points: string[];
+      risk_points: string[];
+      confidence_reason: string;
+      what_agent_2_should_validate: string[];
+    };
+    should_pass_to_agent_2: boolean;
+    pass_reason: string;
+  };
+  _source?: string;
+  _model?: string;
 }
 
 // ── Agent 2 — Market Open Confirmation Output ────────────────────────────────
-// Answers: "After the actual open, is there still usable edge?"
 export interface ConfirmationOutput {
-  decision: "TRADE" | "NO TRADE";
-  trade_mode: "INTRADAY" | "DELIVERY" | "NONE";
-  direction: "BULLISH" | "BEARISH" | "NEUTRAL" | "MIXED";
-  remaining_impact: "HIGH" | "MEDIUM" | "LOW" | "NONE";
-  priced_in_status: "NOT PRICED IN" | "PARTIALLY PRICED IN" | "FULLY PRICED IN" | "UNCLEAR";
-  priority: "HIGH" | "MEDIUM" | "LOW";
-  confidence: number;            // 0-100
-  why_tradable_or_not: string;
-  key_confirmations: string[];
-  warning_flags: string[];
-  invalid_if: string[];
-  final_summary: string;
+  validation: {
+    status: "CONFIRMED" | "WEAKENED" | "INVALIDATED";
+    reason: string;
+  };
+  thesis_check: {
+    alignment: string;
+    supporting_evidence: string[];
+    contradicting_evidence: string[];
+  };
+  market_behavior: {
+    price_behavior: string;
+    volume_behavior: string;
+    volatility_behavior: string;
+  };
+  trade_suitability: {
+    mode: "INTRADAY" | "DELIVERY" | "NONE";
+    holding_logic: string;
+    priority: "HIGH" | "MEDIUM" | "LOW";
+  };
+  indicators_to_check: {
+    trend: string[];
+    momentum: string[];
+    volatility: string[];
+    volume: string[];
+    pattern_recognition: string[];
+    support_resistance: string[];
+  };
+  decision: {
+    should_pass_to_agent_3: boolean;
+    agent_3_instruction: string;
+  };
   _source?: string;
   _model?: string;
 }
 
 // ── Agent 3 — Execution Planner Output ──────────────────────────────────────
-// Answers: "Can this be traded right now, and how safely?"
 export interface ExecutionOutput {
-  action: "BUY" | "SELL" | "WAIT" | "AVOID";
-  execution_decision:
-    | "ENTER NOW"
-    | "WAIT FOR BREAKOUT"
-    | "WAIT FOR PULLBACK"
-    | "AVOID CHASE"
-    | "NO TRADE";
-  trade_mode: "INTRADAY" | "DELIVERY" | "NONE";
-  confidence: number;
-  entry_plan: {
-    entry_type: "MARKET" | "BREAKOUT" | "PULLBACK" | "NONE";
+  _v2_execution_decision: {
+    action: "ENTER_NOW" | "WAIT_FOR_PULLBACK" | "WAIT_FOR_BREAKOUT" | "AVOID";
+    direction: "LONG" | "SHORT" | "NONE";
+    trade_mode: "INTRADAY" | "DELIVERY" | "NONE";
+    confidence: "HIGH" | "MEDIUM" | "LOW";
+    reason: string;
+  };
+  trade_plan: {
     entry_price: number;
-    condition: string;
-  };
-  stop_loss: {
-    price: number;
-    reason: string;
-  };
-  target: {
-    price: number;
-    reason: string;
+    stop_loss: number;
+    target_price: number;
+    risk_reward: number;
   };
   position_sizing: {
-    position_size_shares: number;
-    position_size_inr: number;
-    risk_per_share: number;
-    max_loss_at_sl: number;
+    quantity: number;
+    capital_used: number;
+    risk_amount: number;
     capital_used_pct: number;
-    sizing_note: string;
   };
-  risk_reward: string;
-  invalidation: string;
-  why_now_or_why_wait: string;
-  final_summary: string;
-  _source?: string;
-  _model?: string;
+  order_payload: {
+    transaction_type: "BUY" | "SELL";
+    quantity: number;
+    price: number;
+  };
+  technical_analysis_data?: any; // Data from Agent 2.5
 }
 
 // ── Trade Signal (DB record) ─────────────────────────────────────────────────

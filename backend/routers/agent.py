@@ -1,11 +1,12 @@
 """Agent API router — exposes pipeline triggers, trading signals, and scheduler status.
 
-Four-layer pipeline:
-  Agent 1 (Discovery)          — /api/agent/run
-  Agent 2 (Market Open Conf.)  — /api/agent/confirm
-  Agent 3 (Execution Planner)  — /api/agent/execute
-  Agent 4 (Risk Monitor)       — /api/agent/risk-monitor
-  Full pipeline                — /api/agent/run-full-pipeline
+Five-layer pipeline:
+  Agent 1   (Discovery)          — /api/agent/run
+  Agent 2   (Market Open Conf.)  — /api/agent/confirm
+  Agent 2.5 (Technical Analysis) — /api/agent/technical-analysis
+  Agent 3   (Execution Planner)  — /api/agent/execute
+  Agent 4   (Risk Monitor)       — /api/agent/risk-monitor
+  Full pipeline                  — /api/agent/run-full-pipeline
 """
 
 import time
@@ -55,6 +56,19 @@ def trigger_execution_run(db: Session = Depends(get_db)):
     return result
 
 
+from agent.technical_analysis_agent import run_technical_analysis
+
+@router.post("/technical-analysis")
+def trigger_technical_analysis(db: Session = Depends(get_db)):
+    """Manually trigger Agent 2.5 (Technical Analysis).
+
+    Takes confirmed signals and produces structured technical intelligence
+    for Agent 3. Does NOT generate trades.
+    """
+    result = run_technical_analysis(db)
+    return result
+
+
 from agent.risk_monitor import run_risk_monitor, get_risk_monitor_summary
 
 @router.post("/risk-monitor")
@@ -80,11 +94,12 @@ def get_risk_monitor_state(db: Session = Depends(get_db)):
 
 @router.post("/run-full-pipeline")
 def trigger_full_pipeline(db: Session = Depends(get_db)):
-    """Run the full three-layer pipeline back-to-back:
+    """Run the full pipeline back-to-back:
 
-    1. Agent 1 (Discovery)         — news understanding
-    2. Agent 2 (Market Open Conf.) — thesis validation at open
-    3. Agent 3 (Execution Planner) — entry/stop/target with risk sizing
+    1. Agent 1   (Discovery)          — news understanding
+    2. Agent 2   (Market Open Conf.)  — thesis validation at open
+    3. Agent 2.5 (Technical Analysis) — structured TA interpretation
+    4. Agent 3   (Execution Planner)  — entry/stop/target with risk sizing
 
     Useful for manual end-to-end runs outside of scheduler windows.
     """
@@ -94,13 +109,13 @@ def trigger_full_pipeline(db: Session = Depends(get_db)):
     # Layer 2: Market Open Confirmation
     agent2_result = run_market_open_confirmation(db)
 
-    # Layer 3: Execution Planning
-    agent3_result = run_execution_planner(db)
+    # Layer 2.5: Technical Analysis (auto-triggers Agent 3)
+    agent25_result = run_technical_analysis(db)
 
     return {
         "agent1_discovery": agent1_result,
         "agent2_confirmation": agent2_result,
-        "agent3_execution": agent3_result,
+        "agent25_technical_analysis": agent25_result,
     }
 
 
@@ -231,6 +246,20 @@ def get_signals(
                 "risk_reward": s.risk_reward,
                 "confidence": s.confidence,
                 "reasoning": s.reasoning,
+                # agent_1_reasoning: dedicated column; fallback to combined_view.reasoning
+                # inside the full reasoning JSON for old rows that lack the column.
+                "agent_1_reasoning": (
+                    s.agent_1_reasoning
+                    or (s.reasoning or {}).get("combined_view", {}).get("reasoning")
+                    or {
+                        "why_agent_gave_this_view": "",
+                        "main_driver": "",
+                        "supporting_points": [],
+                        "risk_points": [],
+                        "confidence_reason": "",
+                        "what_agent_2_should_validate": [],
+                    }
+                ),
                 "news_article_ids": s.news_article_ids,
                 "stock_snapshot": s.stock_snapshot,
                 "generated_at": s.generated_at,

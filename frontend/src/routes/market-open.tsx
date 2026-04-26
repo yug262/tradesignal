@@ -80,11 +80,11 @@ function MarketOpenPage() {
     return true;
   });
 
-  const confidenceColor = (conf: number) => {
-    if (conf >= 80) return "text-emerald-400";
-    if (conf >= 60) return "text-amber-400";
-    if (conf >= 40) return "text-orange-400";
-    return "text-red-400";
+  const confidenceColor = (conf: string) => {
+    const c = (conf || "").toUpperCase();
+    if (c === "HIGH") return "text-emerald-400";
+    if (c === "MEDIUM") return "text-amber-400";
+    return "text-zinc-500";
   };
 
   const confirmationBadge = (status: string) => {
@@ -110,29 +110,12 @@ function MarketOpenPage() {
     return "text-zinc-400";
   };
 
-  const moveQualityBadge = (quality: string) => {
-    const q = (quality || "").toUpperCase();
-    if (q === "STRONG") return <Badge variant="outline" className="font-mono text-[9px] border-emerald-500/30 text-emerald-400 bg-emerald-500/5"><TrendingUp size={10} className="mr-1"/>STRONG</Badge>;
-    if (q === "HOLDING") return <Badge variant="outline" className="font-mono text-[9px] border-blue-500/30 text-blue-400 bg-blue-500/5"><Minus size={10} className="mr-1"/>HOLDING</Badge>;
-    if (q === "FADING") return <Badge variant="outline" className="font-mono text-[9px] border-amber-500/30 text-amber-400 bg-amber-500/5"><TrendingDown size={10} className="mr-1"/>FADING</Badge>;
-    if (q === "REVERSING") return <Badge variant="outline" className="font-mono text-[9px] border-red-500/30 text-red-400 bg-red-500/5"><XCircle size={10} className="mr-1"/>REVERSING</Badge>;
-    return <Badge variant="outline" className="font-mono text-[9px] border-zinc-500/30 text-zinc-400 bg-zinc-500/5">WEAK</Badge>;
-  };
-
-  const pricedInBadge = (status: string) => {
+  const statusColor = (status: string) => {
     const s = (status || "").toUpperCase();
-    if (s.includes("NOT")) return <Badge variant="outline" className="font-mono text-[9px] border-emerald-500/30 text-emerald-400 bg-emerald-500/5">NOT PRICED IN</Badge>;
-    if (s.includes("PARTIALLY")) return <Badge variant="outline" className="font-mono text-[9px] border-amber-500/30 text-amber-400 bg-amber-500/5">PARTIAL</Badge>;
-    if (s.includes("FULLY")) return <Badge variant="outline" className="font-mono text-[9px] border-red-500/30 text-red-400 bg-red-500/5">FULLY PRICED IN</Badge>;
-    return <Badge variant="outline" className="font-mono text-[9px] border-zinc-500/30 text-zinc-400 bg-zinc-500/5">UNCLEAR</Badge>;
-  };
-
-  const remainingImpactColor = (impact: string) => {
-    const i = (impact || "").toUpperCase();
-    if (i === "HIGH") return "text-emerald-400";
-    if (i === "MEDIUM") return "text-amber-400";
-    if (i === "LOW") return "text-orange-400";
-    return "text-zinc-500";
+    if (s === "CONFIRMED") return "text-emerald-400 border-emerald-500/30 bg-emerald-500/5";
+    if (s === "WEAKENED") return "text-amber-400 border-amber-500/30 bg-amber-500/5";
+    if (s === "INVALIDATED") return "text-red-400 border-red-500/30 bg-red-500/5";
+    return "text-zinc-400 border-border bg-secondary/50";
   };
 
   return (
@@ -182,7 +165,7 @@ function MarketOpenPage() {
 
       <div className="bg-blue-500/5 border border-blue-500/20 rounded-lg p-4 mb-4">
         <p className="text-xs text-muted-foreground leading-relaxed">
-          <strong>How it works:</strong> Agent 2 validates the Discovery thesis against the actual opening session (9:15–9:20 AM). It evaluates gap direction, opening move quality, and price discovery to determine if the edge is <strong className="text-emerald-400">CONFIRMED (TRADE)</strong> or <strong className="text-red-400">INVALIDATED (NO TRADE)</strong>. Direction (BULLISH / BEARISH) is set by Agent 2 — not by Agent 1.
+          <strong>How it works:</strong> Agent 2 validates the Discovery thesis against the actual opening session (9:15–9:20 AM). It evaluates gap direction, opening move quality, and price discovery to determine if the edge is <strong className="text-emerald-400">CONFIRMED (TRADE)</strong> or <strong className="text-red-400">INVALIDATED (NO TRADE)</strong>. Direction (BULLISH / BEARISH) is set by Agent 1's combined view.
         </p>
       </div>
 
@@ -261,10 +244,12 @@ function MarketOpenPage() {
           {filtered.map((sig: any) => {
             const isExpanded = expandedId === sig.id;
             const reasoning = sig.reasoning || {};
+            const cv = reasoning.combined_view || {};
             const cData = sig.confirmation_data || {};
             const hasConfirmation = cData && Object.keys(cData).length > 0 && sig.confirmation_status !== "pending";
-            const a2Decision = (cData.decision || "").toUpperCase();
-            const isTrade = a2Decision === "TRADE";
+            const isTrade = cData?.decision?.should_pass_to_agent_3 === true;
+            const direction = cv.final_bias || "NEUTRAL";
+            const valStatus = cData?.validation?.status || "PENDING";
 
             return (
               <div
@@ -283,14 +268,12 @@ function MarketOpenPage() {
                     {/* Left: Symbol + Direction + Status */}
                     <div className="flex items-center gap-3">
                        <div className="flex items-center justify-center w-8 h-8 rounded border border-border bg-secondary">
-                         {/* Direction comes from Agent 2 output, not Agent 1 Discovery */}
-                         {directionIcon(cData?.direction)}
+                         {directionIcon(direction)}
                        </div>
                       <div>
                         <h3 className="font-bold text-sm text-foreground tracking-tight">{sig.symbol}</h3>
-                        <div className={cn("font-mono text-[9px] uppercase tracking-widest font-bold", directionColor(cData?.direction))}>
-                          {hasConfirmation ? (cData.direction || "NEUTRAL") : "AWAITING OPEN"}
-                          {sig.trade_mode && sig.trade_mode !== "NONE" ? ` · ${sig.trade_mode}` : ""}
+                        <div className={cn("font-mono text-[9px] uppercase tracking-widest font-bold", directionColor(direction))}>
+                          {hasConfirmation ? direction : "AWAITING OPEN"}
                         </div>
                       </div>
                       <div className="ml-2 border-l border-border/50 pl-4">
@@ -306,24 +289,20 @@ function MarketOpenPage() {
                              <div className={cn("font-mono text-xs font-bold",
                                 isTrade ? "text-emerald-400" : "text-red-400"
                              )}>
-                                {cData.decision || "—"}
+                                {isTrade ? "TRADE" : "NO TRADE"}
                              </div>
                           </div>
                           <div>
-                             <div className="font-mono text-[8px] text-muted-foreground uppercase">Confidence</div>
-                             <div className={cn("font-mono text-xs font-bold", confidenceColor(cData.confidence || 0))}>
-                                {cData.confidence || 0}%
+                             <div className="font-mono text-[8px] text-muted-foreground uppercase">Alignment</div>
+                             <div className="font-mono text-xs font-bold text-foreground">
+                                {cData.thesis_check?.alignment || "—"}
                              </div>
                           </div>
                           <div>
-                             <div className="font-mono text-[8px] text-muted-foreground uppercase">Remaining</div>
-                             <div className={cn("font-mono text-xs font-bold", remainingImpactColor(cData.remaining_impact))}>
-                                {cData.remaining_impact || "—"}
-                             </div>
-                          </div>
-                          <div>
-                             <div className="font-mono text-[8px] text-muted-foreground uppercase">Priced In</div>
-                             {pricedInBadge(cData.priced_in_status)}
+                             <div className="font-mono text-[8px] text-muted-foreground uppercase">Validation</div>
+                             <Badge variant="outline" className={cn("font-mono text-[9px]", statusColor(valStatus))}>
+                               {valStatus}
+                             </Badge>
                           </div>
                        </div>
                     )}
@@ -334,8 +313,10 @@ function MarketOpenPage() {
                   </div>
 
                   {/* Event Summary (always visible) */}
-                  {reasoning.event_summary && (
-                    <p className="text-xs text-muted-foreground mt-2 pl-11 leading-relaxed line-clamp-1">{reasoning.event_summary}</p>
+                  {cv.executive_summary && (
+                    <p className="text-xs text-muted-foreground mt-2 pl-11 leading-relaxed line-clamp-1 italic">
+                      "{cv.executive_summary}"
+                    </p>
                   )}
                 </div>
 
@@ -352,77 +333,55 @@ function MarketOpenPage() {
                         </div>
 
                         {/* Decision + Key Metrics Row */}
-                        <div className="grid grid-cols-2 sm:grid-cols-5 gap-2 pb-4 border-b border-border/30">
-                          <div className={cn("bg-background/50 rounded p-3 border", isTrade ? "border-emerald-500/30" : "border-red-500/30")}>
+                        <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 pb-4 border-b border-border/30">
+                          <div className={cn("bg-background/50 rounded p-3 border border-l-2", isTrade ? "border-emerald-500/30 border-l-emerald-500" : "border-red-500/30 border-l-red-500")}>
                             <div className="font-mono text-[8px] text-muted-foreground uppercase">Decision</div>
                             <div className={cn("font-mono text-sm font-bold", isTrade ? "text-emerald-400" : "text-red-400")}>
-                              {cData.decision || "—"}
+                              {isTrade ? "TRADE" : "NO TRADE"}
                             </div>
                           </div>
-                          <div className="bg-background/50 rounded p-3 border border-border/50">
-                            <div className="font-mono text-[8px] text-muted-foreground uppercase">Direction</div>
-                            <div className={cn("font-mono text-sm font-bold", directionColor(cData.direction))}>
-                              {cData.direction || "—"}
-                            </div>
-                          </div>
-                          <div className="bg-background/50 rounded p-3 border border-border/50">
-                            <div className="font-mono text-[8px] text-muted-foreground uppercase">Confidence</div>
-                            <div className={cn("font-mono text-sm font-bold tabular-nums", confidenceColor(cData.confidence || 0))}>
-                              {cData.confidence || 0}%
-                            </div>
-                          </div>
-                          <div className="bg-background/50 rounded p-3 border border-border/50">
-                            <div className="font-mono text-[8px] text-muted-foreground uppercase">Remaining Impact</div>
-                            <div className={cn("font-mono text-sm font-bold", remainingImpactColor(cData.remaining_impact))}>
-                              {cData.remaining_impact || "—"}
+                          <div className="bg-background/50 rounded p-3 border border-border/50 border-l-2 border-l-primary">
+                            <div className="font-mono text-[8px] text-muted-foreground uppercase">Validation Status</div>
+                            <div className={cn("font-mono text-sm font-bold", statusColor(valStatus).split(' ')[0])}>
+                              {valStatus}
                             </div>
                           </div>
                           <div className="bg-background/50 rounded p-3 border border-border/50">
                             <div className="font-mono text-[8px] text-muted-foreground uppercase">Trade Mode</div>
                             <div className="font-mono text-sm font-bold text-foreground">
-                              {cData.trade_mode || "—"}
+                              {cData.trade_suitability?.mode || "—"}
                             </div>
                           </div>
-                        </div>
-
-                        {/* Priced-In + Priority + Move Quality */}
-                        <div className="flex items-center gap-3 flex-wrap">
-                          <div className="flex items-center gap-1">
-                            <span className="font-mono text-[8px] text-muted-foreground uppercase">Priced In:</span>
-                            {pricedInBadge(cData.priced_in_status)}
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <span className="font-mono text-[8px] text-muted-foreground uppercase">Priority:</span>
-                            <Badge variant="outline" className={cn("font-mono text-[9px]",
-                              cData.priority === "HIGH" ? "border-red-500/30 text-red-400 bg-red-500/5" :
-                              cData.priority === "MEDIUM" ? "border-amber-500/30 text-amber-400 bg-amber-500/5" :
-                              "border-border text-muted-foreground"
-                            )}>
-                              {cData.priority || "LOW"}
-                            </Badge>
+                          <div className="bg-background/50 rounded p-3 border border-border/50">
+                            <div className="font-mono text-[8px] text-muted-foreground uppercase">Priority</div>
+                            <div className="font-mono text-sm font-bold text-foreground">
+                              {cData.trade_suitability?.priority || "—"}
+                            </div>
                           </div>
                         </div>
 
                         {/* Why Tradable / Not */}
-                        {cData.why_tradable_or_not && (
-                          <div className={cn("p-3 rounded border", isTrade ? "bg-emerald-500/5 border-emerald-500/20" : "bg-red-500/5 border-red-500/20")}>
-                            <div className="flex items-center gap-1 mb-1">
-                              <Target size={10} className={isTrade ? "text-emerald-400" : "text-red-400"} />
-                              <span className={cn("font-mono text-[9px] uppercase tracking-widest font-semibold", isTrade ? "text-emerald-400" : "text-red-400")}>
-                                {isTrade ? "Why Edge Exists" : "Why No Edge"}
-                              </span>
-                            </div>
-                            <p className="text-xs text-foreground leading-relaxed">{cData.why_tradable_or_not}</p>
+                        <div className={cn("p-3 rounded border shadow-sm border-l-2", isTrade ? "bg-emerald-500/5 border-emerald-500/20 border-l-emerald-500" : "bg-red-500/5 border-red-500/20 border-l-red-500")}>
+                          <div className="flex items-center gap-1 mb-1">
+                            <Target size={10} className={isTrade ? "text-emerald-400" : "text-red-400"} />
+                            <span className={cn("font-mono text-[9px] uppercase tracking-widest font-semibold", isTrade ? "text-emerald-400" : "text-red-400")}>
+                              Agent 3 Instruction
+                            </span>
                           </div>
-                        )}
+                          <p className="text-xs text-foreground leading-relaxed">{cData.decision?.agent_3_instruction}</p>
+                        </div>
 
-                        {/* Key Confirmations & Warning Flags */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-                          {cData.key_confirmations && cData.key_confirmations.length > 0 && (
-                            <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50">
-                              <div className="font-mono text-[9px] text-emerald-400 uppercase tracking-widest font-semibold mb-1">Key Confirmations</div>
+                          {/* Thesis Check */}
+                          <div className="space-y-3">
+                            <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50 border-l-2 border-l-zinc-500 shadow-sm">
+                              <div className="font-mono text-[9px] uppercase tracking-widest font-semibold mb-1 opacity-80">Validation Reason</div>
+                              <p className="text-xs">{cData.validation?.reason}</p>
+                            </div>
+                            <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50 border-l-2 border-l-emerald-500 shadow-sm">
+                              <div className="font-mono text-[9px] text-emerald-400 uppercase tracking-widest font-semibold mb-1">Supporting Evidence</div>
                               <ul className="space-y-0.5">
-                                {cData.key_confirmations.map((c: string, i: number) => (
+                                {cData.thesis_check?.supporting_evidence?.map((c: string, i: number) => (
                                   <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
                                     <CheckCircle2 size={9} className="text-emerald-400 mt-0.5 shrink-0" />
                                     {c}
@@ -430,44 +389,48 @@ function MarketOpenPage() {
                                 ))}
                               </ul>
                             </div>
-                          )}
-                          {cData.warning_flags && cData.warning_flags.length > 0 && (
-                            <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50">
-                              <div className="font-mono text-[9px] text-amber-400 uppercase tracking-widest font-semibold mb-1">Warning Flags</div>
-                              <ul className="space-y-0.5">
-                                {cData.warning_flags.map((w: string, i: number) => (
-                                  <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
-                                    <AlertTriangle size={9} className="text-amber-400 mt-0.5 shrink-0" />
-                                    {w}
-                                  </li>
-                                ))}
-                              </ul>
+                          </div>
+
+                          {/* Market Behavior & Contradicting Evidence */}
+                          <div className="space-y-3">
+                             <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50 border-l-2 border-l-amber-500 shadow-sm">
+                              <div className="font-mono text-[9px] text-amber-400 uppercase tracking-widest font-semibold mb-1">Market Behavior</div>
+                              <div className="text-[11px] text-muted-foreground"><strong>Price:</strong> {cData.market_behavior?.price_behavior}</div>
+                              <div className="text-[11px] text-muted-foreground"><strong>Volume:</strong> {cData.market_behavior?.volume_behavior}</div>
+                              <div className="text-[11px] text-muted-foreground"><strong>Volatility:</strong> {cData.market_behavior?.volatility_behavior}</div>
                             </div>
-                          )}
+                            
+                            {cData.thesis_check?.contradicting_evidence && cData.thesis_check.contradicting_evidence.length > 0 && (
+                              <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50 border-l-2 border-l-rose-500 shadow-sm">
+                                <div className="font-mono text-[9px] text-rose-400 uppercase tracking-widest font-semibold mb-1">Contradicting Evidence</div>
+                                <ul className="space-y-0.5">
+                                  {cData.thesis_check.contradicting_evidence.map((c: string, i: number) => (
+                                    <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
+                                      <AlertTriangle size={9} className="text-rose-400 mt-0.5 shrink-0" />
+                                      {c}
+                                    </li>
+                                  ))}
+                                </ul>
+                              </div>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Invalid If */}
-                        {cData.invalid_if && cData.invalid_if.length > 0 && (
-                          <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50">
-                            <div className="font-mono text-[9px] text-orange-400 uppercase tracking-widest font-semibold mb-1">Kill Conditions</div>
-                            <ul className="space-y-0.5">
-                              {cData.invalid_if.map((c: string, i: number) => (
-                                <li key={i} className="text-[11px] text-muted-foreground flex items-start gap-1.5">
-                                  <ShieldAlert size={9} className="text-orange-400 mt-0.5 shrink-0" />
-                                  {c}
-                                </li>
-                              ))}
-                            </ul>
+                        {/* Indicators to check */}
+                        <div className="space-y-1 bg-background/50 p-3 rounded border border-border/50 shadow-sm border-l-2 border-l-blue-500">
+                          <div className="font-mono text-[9px] text-blue-400 uppercase tracking-widest font-semibold mb-1">Indicators for Agent 3</div>
+                          <div className="flex flex-wrap gap-2 pt-1">
+                            {Object.entries(cData.indicators_to_check || {}).map(([key, vals]: [string, any]) => {
+                               if (!vals || vals.length === 0) return null;
+                               return (
+                                 <div key={key} className="flex gap-1 items-center bg-secondary/50 px-2 py-1 rounded">
+                                   <span className="text-[9px] font-mono text-muted-foreground uppercase">{key}:</span>
+                                   <span className="text-[10px]">{vals.join(', ')}</span>
+                                 </div>
+                               );
+                            })}
                           </div>
-                        )}
-
-                        {/* Final Summary */}
-                        {cData.final_summary && (
-                          <div className="bg-blue-500/5 border border-blue-500/20 rounded p-3">
-                            <div className="font-mono text-[9px] text-blue-400 uppercase tracking-widest mb-1 font-semibold">Final Verdict</div>
-                            <p className="text-xs text-foreground leading-relaxed font-medium">{cData.final_summary}</p>
-                          </div>
-                        )}
+                        </div>
 
                         {/* Source Meta */}
                         <div className="flex items-center gap-4 pt-2 border-t border-border/30 text-[9px] font-mono text-muted-foreground">
@@ -483,24 +446,15 @@ function MarketOpenPage() {
                       </div>
                     )}
 
-                    {/* Agent 1 Discovery context — uses new Discovery schema fields */}
-                    {(reasoning.reasoning_summary || reasoning.event_summary) && (
+                    {/* Agent 1 Discovery context */}
+                    {cv.combined_trading_thesis && (
                       <div className="pt-2 border-t border-border/30">
-                        <div className="bg-background/50 rounded p-3 border border-border/50">
+                        <div className="bg-background/50 rounded p-3 border border-border/50 border-l-2 border-l-zinc-500">
                           <div className="flex items-center gap-2 mb-1">
-                            <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Agent 1 Discovery</div>
-                            {reasoning.final_verdict && (
-                              <span className={cn(
-                                "font-mono text-[8px] uppercase tracking-widest font-bold",
-                                reasoning.final_verdict === "IMPORTANT_EVENT" ? "text-emerald-400" :
-                                reasoning.final_verdict === "MODERATE_EVENT" ? "text-amber-400" : "text-zinc-500"
-                              )}>
-                                · {reasoning.final_verdict?.replace("_", " ")}
-                              </span>
-                            )}
+                            <div className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest font-semibold">Agent 1 Pre-Market Thesis</div>
                           </div>
-                          <p className="text-[11px] text-muted-foreground leading-relaxed">
-                            {reasoning.reasoning_summary || reasoning.event_summary}
+                          <p className="text-[11px] text-muted-foreground leading-relaxed italic">
+                            "{cv.combined_trading_thesis}"
                           </p>
                         </div>
                       </div>
