@@ -3,11 +3,11 @@ import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from agent.risk_agent_validator import validate_agent_output, _get_source_label
-from agent.risk_monitor import (
+from agent.execution.risk_agent_validator import validate_agent_output, _get_source_label
+from agent.risk.risk_monitor import (
     _record_decision, _get_previous_state, _check_flip_flop, _decision_memory
 )
-from agent.gemini_risk_monitor import _build_agent_input_payload
+from agent.risk.gemini_risk_monitor import _build_agent_input_payload
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # TEST SUITE

@@ -25,7 +25,7 @@ from sqlalchemy.orm import Session
 import db_models
 from database import SessionLocal
 from agent.data_collector import fetch_stock_data_for_symbols
-from agent.gemini_confirmer import confirm_signal_v2
+from .gemini_confirmer import confirm_signal_v2
 
 logger = logging.getLogger(__name__)
 
@@ -427,7 +427,7 @@ def run_market_open_confirmation(db: Session, debug_mode: bool = True) -> dict:
             if status == "CONFIRMED" and should_pass and dec.get("agent_3_instruction") != "DO_NOT_PROCEED":
                 logger.info("[TRIGGER] Agent 2 confirmed %s → Agent 2.5 starting", sig.symbol)
                 try:
-                    from agent.technical_analysis_agent import run_technical_analysis
+                    from agent.technical_analysis.technical_analysis_agent import run_technical_analysis
                     run_technical_analysis(db=db, signal_ids=[sig.id])
                 except Exception as e:
                     logger.error("[ERROR] Triggering Agent 2.5 failed for %s: %s", sig.symbol, e)

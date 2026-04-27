@@ -240,7 +240,7 @@ def inject():
         agent.execution_agent.plan_execution = mock_plan_execution
         
         try:
-            from agent.technical_analysis_agent import run_technical_analysis
+            from agent.technical_analysis.technical_analysis_agent import run_technical_analysis
             run_technical_analysis(db=db, signal_ids=[signal.id])
         finally:
             agent.technical_analysis_agent._build_candle_data = original_build

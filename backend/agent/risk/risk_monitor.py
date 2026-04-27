@@ -30,21 +30,21 @@ from sqlalchemy.orm import Session
 import db_models
 from database import SessionLocal
 
-from agent.risk_features import (
+from .risk_features import (
     extract_risk_features,
     fetch_live_quote,
     fetch_intraday_candles,
     fetch_market_depth,
 )
-from agent.gemini_risk_monitor import (
+from .gemini_risk_monitor import (
     evaluate_risk_with_llm,
     is_agent_available,
 )
-from agent.risk_agent_validator import validate_agent_output
-from agent.risk_rules import evaluate_trade as evaluate_trade_deterministic
+from agent.execution.risk_agent_validator import validate_agent_output
+from .risk_rules import evaluate_trade as evaluate_trade_deterministic
 from agent.paper_trading_engine import close_paper_trade
 
-logger = logging.getLogger("risk_monitor")
+logger = logging.getLogger("agent.risk.risk_monitor")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 

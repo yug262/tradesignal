@@ -8,7 +8,7 @@ from datetime import datetime, timezone, timedelta
 sys.path.append("d:/ATS/backend")
 from database import SessionLocal
 import db_models
-from agent.risk_features import fetch_live_quote
+from agent.risk.risk_features import fetch_live_quote
 
 IST = timezone(timedelta(hours=5, minutes=30))
 

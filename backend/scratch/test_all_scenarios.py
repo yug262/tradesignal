@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
-from agent.risk_rules import evaluate_trade
+from agent.risk.risk_rules import evaluate_trade
 
 print("="*60)
 print(" AGENT 4 (RISK MONITOR) SCENARIO TESTS")

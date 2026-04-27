@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 import db_models
 from database import SessionLocal
 from agent.data_collector import fetch_indicator_data, _fetch_raw_candles
-from agent.gemini_technical_analyzer import analyze_technicals
+from .gemini_technical_analyzer import analyze_technicals
 
 logger = logging.getLogger(__name__)
 
@@ -258,7 +258,7 @@ def run_technical_analysis(db: Session = None, signal_ids: list = None) -> dict:
             chart_image_bytes = None
             try:
                 from services.chart_generator import generate_technical_chart
-                from agent.execution_agent import get_default_indicators
+                from agent.execution.execution_agent import get_default_indicators
                 # Infer bias from Agent 2 for chart indicator selection
                 a1_view = agent2_data.get("agent_1_view", {})
                 bias = str(a1_view.get("final_bias", "NEUTRAL")).upper()
@@ -355,7 +355,7 @@ def run_technical_analysis(db: Session = None, signal_ids: list = None) -> dict:
             if handoff.get("technical_go_no_go") == "GO":
                 logger.info("[TRIGGER] Agent 3 triggered by Agent 2.5 %s", sig.symbol)
                 try:
-                    from agent.execution_agent import run_execution_planner
+                    from agent.execution.execution_agent import run_execution_planner
                     run_execution_planner(db, signal_ids=[sig.id])
                 except Exception as e:
                     logger.error("[ERROR] Triggering Agent 3 failed for %s: %s", sig.symbol, e)

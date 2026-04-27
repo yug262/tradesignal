@@ -26,7 +26,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logger = logging.getLogger("gemini_risk_monitor")
+logger = logging.getLogger("agent.risk.gemini_risk_monitor")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 MODEL_NAME = os.getenv("GEMINI_MODEL")

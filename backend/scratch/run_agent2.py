@@ -24,7 +24,7 @@ debug_mode = args.debug
 print(f"\nTriggering Agent 2 (Market Reality Validator) {'DEBUG' if debug_mode else 'LIVE'} manually...")
 
 from database import SessionLocal
-from agent.confirmation_agent import run_market_open_confirmation
+from agent.confirmation.confirmation_agent import run_market_open_confirmation
 
 db = SessionLocal()
 try:

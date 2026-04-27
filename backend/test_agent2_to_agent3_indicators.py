@@ -23,7 +23,7 @@ class TestAgent2OutputContract(unittest.TestCase):
 
     def test_fallback_trade_intraday_has_indicators(self):
         """TRADE + INTRADAY fallback must return non-empty requested_indicators."""
-        from agent.gemini_confirmer import _fallback_confirmation_v2
+        from agent.confirmation.gemini_confirmer import _fallback_confirmation_v2
 
         input_data = {
             "discovery": {
@@ -63,7 +63,7 @@ class TestAgent2OutputContract(unittest.TestCase):
 
     def test_fallback_trade_delivery_has_indicators(self):
         """TRADE + DELIVERY fallback must return non-empty requested_indicators with 1D timeframe."""
-        from agent.gemini_confirmer import _fallback_confirmation_v2
+        from agent.confirmation.gemini_confirmer import _fallback_confirmation_v2
 
         input_data = {
             "discovery": {
@@ -94,7 +94,7 @@ class TestAgent2OutputContract(unittest.TestCase):
 
     def test_no_trade_gives_empty_indicators(self):
         """NO TRADE fallback must return requested_indicators = []."""
-        from agent.gemini_confirmer import _fallback_confirmation_v2
+        from agent.confirmation.gemini_confirmer import _fallback_confirmation_v2
 
         input_data = {
             "discovery": {
@@ -286,7 +286,7 @@ class TestAgent3GateWithIndicators(unittest.TestCase):
 
     def test_agent3_blocks_on_no_trade(self):
         """Agent 3 must block trade if Agent 2 decided NO TRADE, regardless of indicators."""
-        from agent.gemini_executor import plan_execution
+        from agent.execution.gemini_executor import plan_execution
         from datetime import datetime, timezone, timedelta
 
         IST = timezone(timedelta(hours=5, minutes=30))
@@ -331,7 +331,7 @@ class TestAgent3GateWithIndicators(unittest.TestCase):
         }
 
         # Mock the fresh execution context fetch to return the same context
-        with patch('agent.gemini_executor.fetch_fresh_execution_context') as mock_fetch:
+        with patch('agent.execution.gemini_executor.fetch_fresh_execution_context') as mock_fetch:
             mock_fetch.return_value = input_data["live_execution_context"]
 
             result = plan_execution(input_data, risk_config={

@@ -2,8 +2,8 @@ import sys
 import io
 
 sys.path.append("d:/ATS/backend")
-from agent.risk_monitor import _log_decision
-from agent.risk_agent_validator import validate_agent_output
+from agent.risk.risk_monitor import _log_decision
+from agent.execution.risk_agent_validator import validate_agent_output
 
 def demo_rejected_decision():
     print("Simulating a scenario where the AI Agent tries to make an invalid move...\n")

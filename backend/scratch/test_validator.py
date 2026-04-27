@@ -3,7 +3,7 @@ import sys
 import io
 sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding='utf-8')
 
-from agent.risk_agent_validator import validate_agent_output
+from agent.execution.risk_agent_validator import validate_agent_output
 
 # Test 1: Valid agent output passes cleanly
 features = {
@@ -90,7 +90,7 @@ assert result7["decision"] == "HOLD"  # degraded
 print(f"Test 7 PASS: SL crossing LTP correctly rejected")
 
 # Test 8: Adapter from rule engine output
-from agent.risk_monitor import _adapt_rule_engine_output
+from agent.risk.risk_monitor import _adapt_rule_engine_output
 rule_result = {
     "decision": "TIGHTEN_STOPLOSS", "reason_code": "TRAIL_PERCENTAGE",
     "primary_reason": "Trailing SL", "updated_stop_loss": 2450,

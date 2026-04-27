@@ -6,3 +6,4 @@ dist/
 __init__.py
 test*.py
 test*.png
+scratch/*
