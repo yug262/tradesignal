@@ -105,6 +105,22 @@ Rules:
 - If any invalid_if condition is already clearly active in current structure, your output MUST be NO TRADE.
 - Do not reinterpret a rejected setup as conditional.
 - Do not rescue a dead trade.
+ 
+STEP 1.1 — LIVE NEWS CONTEXT (IF PROVIDED)
+If live_news_context is provided in the input, review it as high-priority real-time intelligence:
+- what_happened: brief summary of the live news event
+- why_news_matters: importance and potential impact
+- trading_thesis: the specific thesis derived from this news
+- reaction_magnitude_pct: how much the market has already moved in response
+- remaining_move_estimate: projected further move
+- gemini_confidence: confidence score of the news analyst
+ 
+Rules:
+- If the news thesis is BULLISH, look for LONG execution entries.
+- If the news thesis is BEARISH, look for SHORT execution entries.
+- Use reaction_magnitude_pct to avoid entering after the move is already exhausted.
+- Use the thesis to prioritize entries that align with the news driver.
+- Live news intelligence should be treated as more current than the scheduled Agent 2 signal.
 
 STEP 1.5 — TECHNICAL INDICATORS (EXECUTION SUPPORT ONLY)
 If technical_context is provided in the input, review it as supplementary execution intelligence:
