@@ -198,10 +198,11 @@ def create_paper_trade(
     risk_reward: str = None,
     max_loss_at_sl: float = 0.0,
     status: str = "OPEN",
+    allow_outside_hours: bool = False,
 ) -> dict:
     """Create a new paper trade and update portfolio."""
 
-    if not _is_market_open():
+    if not allow_outside_hours and not _is_market_open():
         return {
             "success": False,
             "error": "Market is closed. Trading is only allowed on weekdays between 09:15 and 15:30 IST."
@@ -586,42 +587,72 @@ def auto_create_from_execution(db: Session, signal: db_models.DBTradeSignal) -> 
 
     Called from execution_agent.py after a signal is marked as 'planned'.
     Returns the create result, or None if conditions not met.
+
+    Schema: reads V2 flat keys first (entry.price, position_sizing.quantity),
+    falls back to legacy keys (entry_plan.entry_price, position_size_shares).
     """
     exec_data = signal.execution_data if isinstance(signal.execution_data, dict) else {}
 
-    action = exec_data.get("action", "AVOID").upper()
-    exec_decision = exec_data.get("execution_decision", "NO TRADE").upper()
+    raw_action = exec_data.get("action", "AVOID").upper()
+    exec_decision = str(exec_data.get("execution_decision", "NO TRADE")).upper()
 
-    # Allowed execution decisions for creating a trade
-    allowed_decisions = ["ENTER NOW", "WAIT FOR PULLBACK", "WAIT FOR BREAKOUT"]
+    # Accept both V2 ("ENTER_NOW") and legacy ("ENTER NOW") strings
+    allowed_decisions = {
+        "ENTER NOW", "ENTER_NOW",
+        "WAIT FOR PULLBACK", "WAIT_FOR_PULLBACK",
+        "WAIT FOR BREAKOUT", "WAIT_FOR_BREAKOUT",
+    }
     if exec_decision not in allowed_decisions:
+        print(f"  [AUTO-TRADE] Skipping {signal.symbol}: exec_decision='{exec_decision}' not in allowed set")
         return None
 
-    # Determine action (Agent 3 might output "WAIT" as action, so we fallback to signal_type)
-    if action not in ("BUY", "SELL"):
-        action = signal.signal_type.upper() if signal.signal_type in ("BUY", "SELL") else "BUY"
+    # Determine BUY/SELL action — V2 action has "BUY"/"SELL" via _add_backward_compat
+    if raw_action in ("BUY", "SELL"):
+        action = raw_action
+    elif signal.signal_type and signal.signal_type.upper() in ("BUY", "SELL"):
+        action = signal.signal_type.upper()
+    else:
+        action = "BUY"  # safe default for LONG
 
-    entry_plan = exec_data.get("entry_plan", {})
-    stop_loss = exec_data.get("stop_loss", {})
-    target = exec_data.get("target", {})
-    sizing = exec_data.get("position_sizing", {})
+    # ── Read price levels: V2 flat keys first, legacy fallback ────────────────
+    # V2 keys: exec_data["entry"]["price"], exec_data["target"]["price"], exec_data["stop_loss"]["price"]
+    v2_entry = exec_data.get("entry", {}) or {}
+    v2_target = exec_data.get("target", {}) or {}
+    v2_sl = exec_data.get("stop_loss", {}) or {}
 
-    entry_price = entry_plan.get("entry_price", 0)
-    sl_price = stop_loss.get("price", 0)
-    target_price = target.get("price", 0)
-    quantity = sizing.get("position_size_shares", 0)
+    # Legacy keys (old schema): entry_plan.entry_price, stop_loss.price, target.price
+    legacy_entry = exec_data.get("entry_plan", {}) or {}
+    legacy_sl = exec_data.get("stop_loss", {}) or {}   # same key, different usage
+    legacy_target = exec_data.get("target", {}) or {}  # same key
+
+    entry_price = float(v2_entry.get("price") or legacy_entry.get("entry_price") or 0)
+    sl_price    = float(v2_sl.get("price")    or legacy_sl.get("price")           or 0)
+    target_price = float(v2_target.get("price") or legacy_target.get("price")     or 0)
+
+    # ── Read sizing: V2 uses "quantity", legacy uses "position_size_shares" ───
+    sizing = exec_data.get("position_sizing", {}) or {}
+    quantity = int(sizing.get("quantity") or sizing.get("position_size_shares") or 0)
+    max_loss = float(sizing.get("risk_amount") or sizing.get("max_loss_at_sl") or 0)
+
+    print(f"  [AUTO-TRADE] {signal.symbol}: action={action} entry={entry_price} "
+          f"sl={sl_price} target={target_price} qty={quantity}")
 
     if entry_price <= 0 or sl_price <= 0 or target_price <= 0 or quantity <= 0:
+        print(f"  [AUTO-TRADE] SKIP {signal.symbol}: incomplete plan "
+              f"(entry={entry_price}, sl={sl_price}, target={target_price}, qty={quantity})")
         return None
 
     # Determine risk level from confidence
-    confidence = exec_data.get("confidence", 0)
+    confidence = float(exec_data.get("confidence", 0))
     if confidence >= 70:
         risk_level = "LOW"
     elif confidence >= 40:
         risk_level = "MEDIUM"
     else:
         risk_level = "HIGH"
+
+    trade_mode = exec_data.get("trade_mode") or signal.trade_mode or "INTRADAY"
+    rr = str(exec_data.get("risk_reward", ""))
 
     return create_paper_trade(
         db=db,
@@ -631,14 +662,15 @@ def auto_create_from_execution(db: Session, signal: db_models.DBTradeSignal) -> 
         target_price=target_price,
         quantity=quantity,
         action=action,
-        trade_mode=signal.trade_mode or "INTRADAY",
+        trade_mode=trade_mode,
         confidence_score=confidence,
         risk_level=risk_level,
-        trade_reason=exec_data.get("final_summary", "Agent 3 auto-execution"),
+        trade_reason=exec_data.get("why_now_or_why_wait") or exec_data.get("final_summary") or "Agent 3 auto-execution",
         signal_id=signal.id,
-        risk_reward=exec_data.get("risk_reward", ""),
-        max_loss_at_sl=sizing.get("max_loss_at_sl", 0),
+        risk_reward=rr,
+        max_loss_at_sl=max_loss,
         status="PENDING",
+        allow_outside_hours=True,   # Agent 3 auto-creates even outside market hours (pre-stage)
     )
 
 

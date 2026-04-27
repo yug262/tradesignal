@@ -23,6 +23,7 @@ TIME CONTEXT:
 
 import os
 import json
+import re
 import logging
 from google import genai
 from google.genai import types
@@ -33,7 +34,7 @@ load_dotenv()
 logger = logging.getLogger(__name__)
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL")
 
 _client = None
 if GEMINI_API_KEY and GEMINI_API_KEY != "your_gemini_api_key_here":
@@ -79,6 +80,24 @@ FORBIDDEN_FIELDS = {
 # ── System Instruction ──────────────────────────────────────────────────────
 
 AGENT2_SYSTEM_INSTRUCTION = """You are Agent 2: the 9:20 AM Market Reality Validator for an Indian equities trading system.
+
+=== STRICT OUTPUT ENFORCEMENT RULES ===
+1. OUTPUT MUST BE RAW JSON ONLY.
+2. No markdown.
+3. No ```json code fences.
+4. No explanation before or after JSON.
+5. Every key MUST be in double quotes.
+6. Every string value MUST be in double quotes.
+7. No trailing commas.
+8. No comments.
+9. No single quotes.
+10. No unescaped newline inside string values.
+11. Do not use multiline string values.
+12. Keep all text values short and single-line.
+13. If unsure, still return valid JSON using conservative enum values.
+14. Never output Python dict style.
+15. Never output JavaScript object style.
+========================================
 
 PURPOSE:
 You validate Agent 1's pre-market thesis using real market behavior after open (~9:20 AM IST).
@@ -256,6 +275,15 @@ IMPORTANT:
 - Do NOT use 5m/15m as primary at 9:20
 - Always consider available data window
 
+Before returning, silently validate:
+- JSON.parse(output) must succeed
+- all required fields exist
+- all enum values match exactly
+- no extra fields exist
+- no field contains raw newline characters
+
+Return ONLY the final JSON object.
+
 === OUTPUT FORMAT ===
 Return this exact JSON:
 
@@ -346,46 +374,78 @@ def confirm_signal_v2(input_data: dict, market_date: str) -> dict:
         input_json=json.dumps(input_data, indent=2),
     )
 
-    try:
-        response = _client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=AGENT2_SYSTEM_INSTRUCTION,
-                temperature=0.1,
-                max_output_tokens=1024,
-            ),
-        )
-
-        text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
-
-        result = json.loads(text)
-
-        # Validate output
+    import time as _time
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
         try:
-            result = validate_agent2_output(result, input_data)
-        except Agent2ValidationError as ve:
-            logger.error("[AGENT 2] VALIDATION FAILED for %s: %s", symbol, ve)
-            logger.warning("[AGENT 2] Falling back to rule engine for %s", symbol)
+            response = _client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=AGENT2_SYSTEM_INSTRUCTION,
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                ),
+            )
+
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+
+            # Fix common JSON syntax errors from LLMs
+            # Remove trailing commas before closing braces and brackets
+            text = re.sub(r',\s*}', '}', text)
+            text = re.sub(r',\s*]', ']', text)
+            
+            # Remove unquoted property names (basic attempt if model forgets quotes)
+            # We only want to do this if json.loads fails, but trailing commas are safe to remove always.
+
+
+            try:
+                result = json.loads(text)
+            except json.JSONDecodeError as e:
+                # Fallback for unescaped newlines or single quotes
+                try:
+                    import ast
+                    # ast.literal_eval handles single quotes and trailing commas
+                    # Replace 'null' with 'None', 'true' with 'True', 'false' with 'False'
+                    py_text = text.replace("null", "None").replace("true", "True").replace("false", "False")
+                    result = ast.literal_eval(py_text)
+                except Exception as ast_e:
+                    logger.error("[AGENT 2] JSON parse error for %s: %s (ast failed: %s)", symbol, e, ast_e)
+                    logger.error("[AGENT 2] Failing TEXT: %s", text)
+                    return _fallback_confirmation_v2(input_data)
+
+            # Validate output
+            try:
+                result = validate_agent2_output(result, input_data)
+            except Agent2ValidationError as ve:
+                logger.error("[AGENT 2] VALIDATION FAILED for %s: %s", symbol, ve)
+                logger.warning("[AGENT 2] Falling back to rule engine for %s", symbol)
+                return _fallback_confirmation_v2(input_data)
+
+            result["_source"] = "gemini_agent2"
+            result["_model"] = MODEL_NAME
+            return result
+
+        except Exception as e:
+            err_str = str(e)
+            is_503 = "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str
+            if is_503 and attempt < max_retries:
+                wait_sec = 8 * attempt
+                logger.warning("[AGENT 2] 503 for %s (attempt %d/%d) — retrying in %ds...", symbol, attempt, max_retries, wait_sec)
+                _time.sleep(wait_sec)
+                continue
+            logger.error("[AGENT 2] Gemini error for %s: %s", symbol, e)
             return _fallback_confirmation_v2(input_data)
 
-        result["_source"] = "gemini_agent2"
-        result["_model"] = MODEL_NAME
-        return result
 
-    except json.JSONDecodeError as e:
-        logger.error("[AGENT 2] JSON parse error for %s: %s", symbol, e)
-        return _fallback_confirmation_v2(input_data)
-    except Exception as e:
-        logger.error("[AGENT 2] Gemini error for %s: %s", symbol, e)
-        return _fallback_confirmation_v2(input_data)
+
 
 
 # ── Validator ───────────────────────────────────────────────────────────────
@@ -711,23 +771,24 @@ def _compute_alignment(
     if not previous_close or not ltp:
         return "UNCLEAR", "Insufficient price data"
 
+    price_vs_close_pct = (ltp - previous_close) / previous_close * 100 if previous_close else 0
     price_vs_close = "above" if ltp > previous_close else "below" if ltp < previous_close else "at"
 
     if bias == "BULLISH":
         if ltp > previous_close and position == "NEAR_HIGH":
             return "ALIGNED", f"Price is {price_vs_close} prev close and near day high — bullish thesis holding"
-        elif ltp < previous_close or position == "NEAR_LOW":
-            return "CONTRADICTED", f"Price is {price_vs_close} prev close and {position} — bullish thesis rejected"
+        elif price_vs_close_pct < -0.5 or (position == "NEAR_LOW" and ltp < previous_close):
+            return "CONTRADICTED", f"Price is {price_vs_close} prev close ({price_vs_close_pct:.2f}%) and {position} — bullish thesis rejected"
         else:
-            return "PARTIAL", f"Price is {price_vs_close} prev close but at {position} — partial bullish confirmation"
+            return "PARTIAL", f"Price is {price_vs_close} prev close ({price_vs_close_pct:.2f}%) at {position} — partial bullish confirmation"
 
     elif bias == "BEARISH":
         if ltp < previous_close and position == "NEAR_LOW":
             return "ALIGNED", f"Price is {price_vs_close} prev close and near day low — bearish thesis holding"
-        elif ltp > previous_close or position == "NEAR_HIGH":
-            return "CONTRADICTED", f"Price is {price_vs_close} prev close and {position} — bearish thesis rejected"
+        elif price_vs_close_pct > 0.5 or (position == "NEAR_HIGH" and ltp > previous_close):
+            return "CONTRADICTED", f"Price is {price_vs_close} prev close (+{price_vs_close_pct:.2f}%) and {position} — bearish thesis rejected"
         else:
-            return "PARTIAL", f"Price is {price_vs_close} prev close but at {position} — partial bearish confirmation"
+            return "PARTIAL", f"Price is {price_vs_close} prev close (+{price_vs_close_pct:.2f}%) at {position} — partial bearish confirmation"
 
     else:  # MIXED or NEUTRAL
         return "UNCLEAR", f"Thesis is {bias} — price is {price_vs_close} prev close at {position}"
@@ -976,8 +1037,8 @@ def _fallback_confirmation_v2(input_data: dict) -> dict:
     }
 
     logger.info(
-        "[AGENT 2] FALLBACK | symbol=%s | status=%s | alignment=%s | pass=%s",
-        symbol, status, alignment, should_pass,
+        "[AGENT 2] FALLBACK | symbol=%s | ltp=%.2f | prev_close=%.2f | gap_pct=%.2f%% | behavior=%s | position=%s | status=%s | alignment=%s | pass=%s",
+        symbol, ltp, prev_close, gap_pct, behavior, position, status, alignment, should_pass,
     )
     logger.info(
         "[AGENT 2] SUITABILITY | mode=%s | holding_logic=%s",

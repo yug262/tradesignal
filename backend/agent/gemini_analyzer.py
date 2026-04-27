@@ -30,7 +30,7 @@ if not logger.handlers:
     logger.propagate = False
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+MODEL_NAME = os.getenv("GEMINI_MODEL")
 
 _client = None
 if GEMINI_API_KEY and GEMINI_API_KEY.strip():
@@ -652,7 +652,7 @@ def analyze_stock(
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
                 temperature=0.1,
-                max_output_tokens=2048,
+                response_mime_type="application/json",
             ),
         )
 

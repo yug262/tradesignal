@@ -397,39 +397,65 @@ function ExecutionPlannerPage() {
                         </div>
 
                         {/* Price Levels */}
-                        {eData.action !== "AVOID" && (
-                          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                            {/* Entry */}
-                            <div className="bg-blue-500/5 rounded p-3 border border-blue-500/20">
-                               <div className="font-mono text-[9px] text-blue-400 uppercase tracking-widest mb-1 font-semibold">Entry Plan</div>
-                               <div className="text-lg font-bold text-foreground mb-1">
-                                  {eData.entry_plan?.entry_price ? `₹${eData.entry_plan.entry_price}` : "MKT"}
-                               </div>
-                               <Badge variant="outline" className="font-mono text-[8px] bg-background/50 text-muted-foreground mb-2">
-                                  TYPE: {eData.entry_plan?.entry_type || "NONE"}
-                               </Badge>
-                               <p className="text-[11px] text-muted-foreground">{eData.entry_plan?.condition}</p>
-                            </div>
+                        {eData.action !== "AVOID" && (() => {
+                          const isWait = eData.action === "WAIT_FOR_PULLBACK" || eData.action === "WAIT_FOR_BREAKOUT";
+                          const entryPrice = eData.entry?.price || eData.entry_plan?.entry_price || 0;
+                          const targetPrice = eData.target?.price || 0;
+                          const slPrice = eData.stop_loss?.price || 0;
+                          const entryType = eData.entry?.type || eData.entry_plan?.entry_type || "MKT";
+                          const entryNotes = eData.entry?.notes || eData.entry_plan?.condition || eData.why_now_or_why_wait || "";
+                          const targetNotes = eData.target?.notes || eData.target?.reason || "";
+                          const slNotes = eData.stop_loss?.notes || eData.stop_loss?.reason || "";
+                          return (
+                            <div className="space-y-2">
+                              {isWait && (
+                                <div className="flex items-center gap-2 px-1">
+                                  <div className="h-px flex-1 bg-amber-500/20" />
+                                  <span className="font-mono text-[9px] text-amber-400 uppercase tracking-widest">Projected Levels (pending trigger)</span>
+                                  <div className="h-px flex-1 bg-amber-500/20" />
+                                </div>
+                              )}
+                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                {/* Entry */}
+                                <div className={`rounded p-3 border ${isWait ? "bg-amber-500/5 border-amber-500/20" : "bg-blue-500/5 border-blue-500/20"}`}>
+                                   <div className={`font-mono text-[9px] uppercase tracking-widest mb-1 font-semibold ${isWait ? "text-amber-400" : "text-blue-400"}`}>
+                                     {isWait ? "Watch Entry" : "Entry Plan"}
+                                   </div>
+                                   <div className="text-lg font-bold text-foreground mb-1">
+                                     {entryPrice ? `₹${entryPrice}` : (isWait ? "On Trigger" : "MKT")}
+                                   </div>
+                                   <Badge variant="outline" className="font-mono text-[8px] bg-background/50 text-muted-foreground mb-2">
+                                     TYPE: {isWait ? "CONDITIONAL" : entryType}
+                                   </Badge>
+                                   <p className="text-[11px] text-muted-foreground">{entryNotes}</p>
+                                </div>
 
-                            {/* Target */}
-                            <div className="bg-emerald-500/5 rounded p-3 border border-emerald-500/20">
-                               <div className="font-mono text-[9px] text-emerald-400 uppercase tracking-widest mb-1 font-semibold">Target</div>
-                               <div className="text-lg font-bold text-emerald-400 mb-1">
-                                  {eData.target?.price ? `₹${eData.target.price}` : "—"}
-                               </div>
-                               <p className="text-[11px] text-muted-foreground">{eData.target?.reason}</p>
-                            </div>
+                                {/* Target */}
+                                <div className="bg-emerald-500/5 rounded p-3 border border-emerald-500/20">
+                                   <div className="font-mono text-[9px] text-emerald-400 uppercase tracking-widest mb-1 font-semibold">
+                                     {isWait ? "Projected Target" : "Target"}
+                                   </div>
+                                   <div className="text-lg font-bold text-emerald-400 mb-1">
+                                     {targetPrice ? `₹${targetPrice}` : "—"}
+                                   </div>
+                                   <p className="text-[11px] text-muted-foreground">{targetNotes}</p>
+                                </div>
 
-                            {/* Stoploss */}
-                            <div className="bg-red-500/5 rounded p-3 border border-red-500/20">
-                               <div className="font-mono text-[9px] text-red-400 uppercase tracking-widest mb-1 font-semibold">Stop Loss</div>
-                               <div className="text-lg font-bold text-red-400 mb-1">
-                                  {eData.stop_loss?.price ? `₹${eData.stop_loss.price}` : "—"}
-                               </div>
-                               <p className="text-[11px] text-muted-foreground">{eData.stop_loss?.reason}</p>
+                                {/* Stop Loss */}
+                                <div className="bg-red-500/5 rounded p-3 border border-red-500/20">
+                                   <div className="font-mono text-[9px] text-red-400 uppercase tracking-widest mb-1 font-semibold">
+                                     {isWait ? "Projected Stop Loss" : "Stop Loss"}
+                                   </div>
+                                   <div className="text-lg font-bold text-red-400 mb-1">
+                                     {slPrice ? `₹${slPrice}` : "—"}
+                                   </div>
+                                   <p className="text-[11px] text-muted-foreground">{slNotes}</p>
+                                </div>
+                              </div>
                             </div>
-                          </div>
-                        )}
+                          );
+                        })()}
+
 
                         {/* Context & Risk */}
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 mt-2">
@@ -448,35 +474,59 @@ function ExecutionPlannerPage() {
                         </div>
 
                         {/* Position Sizing Block */}
-                        {eData.position_sizing && eData.position_sizing.position_size_shares > 0 && (
-                          <div className="bg-emerald-500/5 border border-emerald-500/20 rounded-lg p-3">
-                            <div className="flex items-center gap-2 mb-2">
-                              <Activity size={11} className="text-emerald-400" />
-                              <span className="font-mono text-[9px] text-emerald-400 uppercase tracking-widest font-semibold">Position Sizing</span>
+                        {(() => {
+                          const ps = eData.position_sizing || {};
+                          // Support both V2 (quantity/capital_used) and legacy (position_size_shares/position_size_inr)
+                          const shares = ps.quantity ?? ps.position_size_shares ?? 0;
+                          const capital = ps.capital_used ?? ps.position_size_inr ?? 0;
+                          const riskAmt = ps.risk_amount ?? ps.max_loss_at_sl ?? 0;
+                          const riskPerShare = ps.risk_per_share ?? 0;
+                          const capPct = ps.capital_used_pct ?? (capital && eData.total_capital ? ((capital / eData.total_capital) * 100).toFixed(1) : null);
+                          const sizingNote = ps.sizing_note ?? "";
+                          const isWait = eData.action === "WAIT_FOR_PULLBACK" || eData.action === "WAIT_FOR_BREAKOUT";
+
+                          if (!shares || shares <= 0) return null;
+                          return (
+                            <div className={`border rounded-lg p-3 ${isWait ? "bg-amber-500/5 border-amber-500/20" : "bg-emerald-500/5 border-emerald-500/20"}`}>
+                              <div className="flex items-center gap-2 mb-2">
+                                <Activity size={11} className={isWait ? "text-amber-400" : "text-emerald-400"} />
+                                <span className={`font-mono text-[9px] uppercase tracking-widest font-semibold ${isWait ? "text-amber-400" : "text-emerald-400"}`}>
+                                  {isWait ? "Pre-Staged Position (limit order ready)" : "Position Sizing"}
+                                </span>
+                              </div>
+                              <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                                <div className="bg-background/50 rounded p-2 border border-border/30">
+                                  <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Shares</div>
+                                  <div className="font-mono text-sm font-bold text-foreground">{shares.toLocaleString()}</div>
+                                </div>
+                                <div className="bg-background/50 rounded p-2 border border-border/30">
+                                  <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">{isWait ? "Capital Reserved" : "Capital Deployed"}</div>
+                                  <div className="font-mono text-sm font-bold text-amber-400">₹{Number(capital).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                                </div>
+                                {capPct && (
+                                  <div className="bg-background/50 rounded p-2 border border-border/30">
+                                    <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">% of Capital</div>
+                                    <div className="font-mono text-sm font-bold text-blue-400">{capPct}%</div>
+                                  </div>
+                                )}
+                                <div className="bg-background/50 rounded p-2 border border-border/30">
+                                  <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Max Risk at SL</div>
+                                  <div className="font-mono text-sm font-bold text-red-400">₹{Number(riskAmt).toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
+                                </div>
+                                {riskPerShare > 0 && (
+                                  <div className="bg-background/50 rounded p-2 border border-border/30">
+                                    <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Risk / Share</div>
+                                    <div className="font-mono text-sm font-bold text-muted-foreground">₹{riskPerShare}</div>
+                                  </div>
+                                )}
+                              </div>
+                              {sizingNote && (
+                                <p className="font-mono text-[8px] text-muted-foreground opacity-50 mt-2">{sizingNote}</p>
+                              )}
                             </div>
-                            <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                              <div className="bg-background/50 rounded p-2 border border-border/30">
-                                <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Shares</div>
-                                <div className="font-mono text-sm font-bold text-foreground">{eData.position_sizing.position_size_shares.toLocaleString()}</div>
-                              </div>
-                              <div className="bg-background/50 rounded p-2 border border-border/30">
-                                <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Capital Deployed</div>
-                                <div className="font-mono text-sm font-bold text-amber-400">₹{eData.position_sizing.position_size_inr?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-                              </div>
-                              <div className="bg-background/50 rounded p-2 border border-border/30">
-                                <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">% of Capital</div>
-                                <div className="font-mono text-sm font-bold text-blue-400">{eData.position_sizing.capital_used_pct}%</div>
-                              </div>
-                              <div className="bg-background/50 rounded p-2 border border-border/30">
-                                <div className="font-mono text-[8px] text-muted-foreground uppercase mb-0.5">Max Loss at SL</div>
-                                <div className="font-mono text-sm font-bold text-red-400">₹{eData.position_sizing.max_loss_at_sl?.toLocaleString('en-IN', { maximumFractionDigits: 0 })}</div>
-                              </div>
-                            </div>
-                            {eData.position_sizing.sizing_note && (
-                              <p className="font-mono text-[8px] text-muted-foreground opacity-50 mt-2">{eData.position_sizing.sizing_note}</p>
-                            )}
-                          </div>
-                        )}
+                          );
+                        })()}
+
 
                         {/* Final Summary */}
                         {eData.final_summary && (

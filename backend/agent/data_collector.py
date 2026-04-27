@@ -608,6 +608,7 @@ def fetch_indicator_data(db: Session, symbol: str, trade_mode: str, indicator_na
     try:
         # Extract base arrays
         closes = np.array([float(c[4]) for c in candles])
+        volumes = np.array([float(c[5]) for c in candles if len(c) > 5] or [0.0]*len(closes))
         
         # --- PRICE SCALE SANITY CHECK ---
         last_close = closes[-1]
@@ -631,29 +632,38 @@ def fetch_indicator_data(db: Session, symbol: str, trade_mode: str, indicator_na
         print(f"  [ERROR] Data parsing error for {symbol}: {e}")
         return []
 
-    # 4. Execute TA-Lib indicator
+    # 4. Execute TA-Lib or Manual indicator
     try:
-        func = getattr(talib, indicator_name.upper())
-        # Most common indicators take (close) or (high, low, close)
-        # We attempt to call with appropriate parameters based on the indicator name
-        if indicator_name.upper() in ["RSI", "SMA", "EMA", "WMA", "MOM", "ROC", "TRIX"]:
-            result = func(closes)
-        elif indicator_name.upper() in ["ATR", "NATR", "TRANGE", "CCI", "WILLR"]:
-            result = func(highs, lows, closes)
-        elif indicator_name.upper() in ["MACD"]:
-            macd, signal, hist = func(closes)
-            result = macd # Store the main MACD line; could be expanded to store all
-        elif indicator_name.upper() in ["BBANDS"]:
-            upper, middle, lower = func(closes)
-            result = middle
+        # --- SPECIAL HANDLING FOR NON-TALIB INDICATORS ---
+        if indicator_name.upper() == "VWAP":
+            # Typical VWAP = Sum(Typical Price * Volume) / Sum(Volume)
+            # For simplicity, we'll do an anchored VWAP from the start of the fetched window
+            typical_price = (highs + lows + closes) / 3
+            result = np.cumsum(typical_price * volumes) / np.cumsum(volumes)
         else:
-            # Fallback: try with closes
-            result = func(closes)
+            func = getattr(talib, indicator_name.upper())
+            # Most common indicators take (close) or (high, low, close)
+            # We attempt to call with appropriate parameters based on the indicator name
+            if indicator_name.upper() in ["RSI", "SMA", "EMA", "WMA", "MOM", "ROC", "TRIX"]:
+                result = func(closes)
+            elif indicator_name.upper() in ["ATR", "NATR", "TRANGE", "CCI", "WILLR"]:
+                result = func(highs, lows, closes)
+            elif indicator_name.upper() == "OBV":
+                result = func(closes, volumes)
+            elif indicator_name.upper() in ["MACD"]:
+                macd, signal, hist = func(closes)
+                result = macd # Store the main MACD line
+            elif indicator_name.upper() in ["BBANDS"]:
+                upper, middle, lower = func(closes)
+                result = middle
+            else:
+                # Fallback: try with closes
+                result = func(closes)
     except AttributeError:
-        print(f"  [ERROR] Indicator '{indicator_name}' not found in TA-Lib.")
+        print(f"  [ERROR] Indicator '{indicator_name}' not found in TA-Lib or manual registry.")
         return []
     except Exception as e:
-        print(f"  [ERROR] TA-Lib execution failed for {indicator_name}: {e}")
+        print(f"  [ERROR] Indicator execution failed for {indicator_name}: {e}")
         return []
 
     if result is None:

@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 MODEL_NAME = os.getenv("GEMINI_MODEL")
 
 _client = None
@@ -264,8 +264,9 @@ If action = AVOID:
 If action = WAIT_FOR_PULLBACK or WAIT_FOR_BREAKOUT:
 - direction may be LONG or SHORT (based on thesis)
 - trade_mode may be INTRADAY or DELIVERY
-- order_payload: transaction_type = NONE, product = NONE, order_type = NONE, quantity = 0, price = 0
-- trade_plan prices may be 0 (projected levels only if structurally justified)
+- order_payload: transaction_type = BUY or SELL (based on direction), product matches trade_mode, order_type = LIMIT, price = entry_price (this is a pre-staged limit order ready to trigger)
+- trade_plan MUST include all projected price levels (entry_price, stop_loss, target_price, risk_reward). Use structurally justified values — breakout level, S/R, ATR-derived SL, minimum RR target. Do NOT set them to 0.
+- position_sizing MUST be fully computed at the projected entry_price using EXACTLY the same formula as ENTER_NOW. The trader is pre-sizing before the trigger so they are ready to fill immediately when price hits the level.
 
 If action = ENTER_NOW:
 - direction must be LONG or SHORT
@@ -698,16 +699,29 @@ def validate_execution_schema(result: dict) -> tuple[bool, str]:
         if int(op.get("quantity", 0)) != qty:
             return False, f"order_payload.quantity({op.get('quantity')}) != position_sizing.quantity({qty})"
 
-    # ── WAIT rules: no executable order ──────────────────────────────────────
+    # ── WAIT rules: Allow pre-staged limit orders ────────────────────────────
     if action in ("WAIT_FOR_PULLBACK", "WAIT_FOR_BREAKOUT"):
-        if op.get("transaction_type") != "NONE":
-            return False, f"{action} must have transaction_type=NONE"
-        if op.get("order_type") != "NONE":
-            return False, f"{action} must have order_type=NONE"
-        if int(op.get("quantity", 0)) != 0:
-            return False, f"{action} must have order_payload.quantity=0"
-        if op.get("product") != "NONE":
-            return False, f"{action} must have product=NONE"
+        # If payload is provided, it must be consistent
+        txn = op.get("transaction_type", "NONE")
+        if txn != "NONE":
+            if txn not in ("BUY", "SELL"):
+                return False, f"{action} has invalid transaction_type: {txn}"
+            if direction == "LONG" and txn != "BUY":
+                return False, f"{action} LONG requires BUY, got {txn}"
+            if direction == "SHORT" and txn != "SELL":
+                return False, f"{action} SHORT requires SELL, got {txn}"
+            
+            # If txn provided, qty should match sizing
+            qty = int(ps.get("quantity", 0))
+            if int(op.get("quantity", 0)) != qty:
+                return False, f"{action} order_payload.quantity({op.get('quantity')}) != position_sizing.quantity({qty})"
+            
+            # If txn provided, product should match trade_mode
+            op_product = op.get("product", "NONE")
+            if trade_mode == "INTRADAY" and op_product != "INTRADAY":
+                return False, f"{action} trade_mode=INTRADAY requires product=INTRADAY, got {op_product}"
+            if trade_mode == "DELIVERY" and op_product != "DELIVERY":
+                return False, f"{action} trade_mode=DELIVERY requires product=DELIVERY, got {op_product}"
 
     return True, "ok"
 
@@ -1091,7 +1105,7 @@ def _post_llm_validate_and_enforce(result: dict, symbol: str, rp: dict, ctx: dic
 
     action = ed.get("action", "AVOID")
 
-    if action != "ENTER_NOW":
+    if action not in ("ENTER_NOW", "WAIT_FOR_PULLBACK", "WAIT_FOR_BREAKOUT"):
         return result
 
     tp = result.get("trade_plan", {})
@@ -1403,7 +1417,7 @@ def fetch_fresh_execution_context(symbol: str) -> dict:
 # Main planner
 # ---------------------------
 
-def plan_execution(input_data: dict, risk_config: dict = None) -> dict:
+def plan_execution(input_data: dict, risk_config: dict = None, chart_image_bytes: bytes = None) -> dict:
     symbol = input_data.get("symbol", "UNKNOWN")
     company_name = input_data.get("company_name", symbol)
     risk_config = risk_config or {}
@@ -1479,138 +1493,154 @@ def plan_execution(input_data: dict, risk_config: dict = None) -> dict:
         input_json=json.dumps(input_data, indent=2)
     )
 
-    try:
-        response = _client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=AGENT3_SYSTEM_INSTRUCTION,
-                temperature=0.1,
-                max_output_tokens=1536,
-            ),
-        )
+    contents = [prompt]
+    if chart_image_bytes:
+        contents.append(types.Part.from_bytes(data=chart_image_bytes, mime_type="image/png"))
 
-        text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
+    import time as _time
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
+        try:
+            response = _client.models.generate_content(
+                model=MODEL_NAME,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction=AGENT3_SYSTEM_INSTRUCTION,
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                ),
+            )
 
-        raw = json.loads(text)
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
 
-        # ── Dual-path parsing: V2 direct → old-schema fallback ──
-        is_v2 = isinstance(raw.get("execution_decision"), dict) and "stock" in raw
+            raw = json.loads(text)
 
-        if is_v2:
-            # Gemini returned V2 schema directly
-            result = dict(raw)
-            print(f"      [PARSE] V2 schema detected for {symbol}")
-        else:
-            # Old schema — normalize confidence, then run legacy risk checks, then convert
-            print(f"      [PARSE] Old schema detected for {symbol} — converting to V2")
-            old_result = dict(raw)
-            try:
-                conf = old_result.get("confidence", 0)
-                if isinstance(conf, float) and conf <= 1.0:
-                    old_result["confidence"] = int(conf * 100)
-                else:
-                    old_result["confidence"] = int(conf)
-            except Exception:
-                old_result["confidence"] = 0
+            # ── Dual-path parsing: V2 direct → old-schema fallback ──
+            is_v2 = isinstance(raw.get("execution_decision"), dict) and "stock" in raw
 
-            ep = old_result.get("entry_plan", {}) or {}
-            sl = old_result.get("stop_loss", {}) or {}
-            tg = old_result.get("target", {}) or {}
-            agent1 = input_data.get("agent2_view", {}).get("agent_1_view", {})
-            direction = str(agent1.get("final_bias", "NEUTRAL")).upper()
-            exec_dec = str(old_result.get("execution_decision", "NO TRADE")).upper()
-            entry_price = _safe_float(ep.get("entry_price"), 0.0)
-            stop_price = _safe_float(sl.get("price"), 0.0)
-            target_price = _safe_float(tg.get("price"), 0.0)
-
-            # Legacy risk checks on old format
-            agent2_dec = input_data.get("agent2_view", {}).get("decision", {})
-            should_pass = agent2_dec.get("should_pass_to_agent_3", False)
-            if not should_pass:
-                old_result = _normalize_result_no_trade(old_result, "Agent 2 rejected the trade")
+            if is_v2:
+                # Gemini returned V2 schema directly
+                result = dict(raw)
+                print(f"      [PARSE] V2 schema detected for {symbol}")
             else:
-                if exec_dec == "ENTER NOW":
-                    if direction not in ("BULLISH", "BEARISH"):
-                        old_result = _normalize_result_no_trade(old_result, "invalid Agent 2 direction for live entry")
-                    elif entry_price <= 0 or stop_price <= 0 or target_price <= 0:
-                        old_result = _normalize_result_no_trade(old_result, "invalid entry/stop/target for live entry")
+                # Old schema — normalize confidence, then run legacy risk checks, then convert
+                print(f"      [PARSE] Old schema detected for {symbol} — converting to V2")
+                old_result = dict(raw)
+                try:
+                    conf = old_result.get("confidence", 0)
+                    if isinstance(conf, float) and conf <= 1.0:
+                        old_result["confidence"] = int(conf * 100)
                     else:
-                        sizing = _compute_position_size(entry_price, stop_price, direction, rp)
-                        actual_rr, meets_min = _validate_rr(entry_price, stop_price, target_price, direction, rp["min_rr"])
-                        if sizing["position_size_shares"] == 0:
-                            old_result = _normalize_result_no_trade(old_result, f"position sizing failed: {sizing['sizing_note']}")
-                        elif not meets_min:
-                            old_result = _normalize_result_no_trade(old_result, f"trade rejected: RR 1:{actual_rr} below min {rp['min_rr']}:1")
+                        old_result["confidence"] = int(conf)
+                except Exception:
+                    old_result["confidence"] = 0
+
+                ep = old_result.get("entry_plan", {}) or {}
+                sl = old_result.get("stop_loss", {}) or {}
+                tg = old_result.get("target", {}) or {}
+                agent1 = input_data.get("agent2_view", {}).get("agent_1_view", {})
+                direction = str(agent1.get("final_bias", "NEUTRAL")).upper()
+                exec_dec = str(old_result.get("execution_decision", "NO TRADE")).upper()
+                entry_price = _safe_float(ep.get("entry_price"), 0.0)
+                stop_price = _safe_float(sl.get("price"), 0.0)
+                target_price = _safe_float(tg.get("price"), 0.0)
+
+                # Legacy risk checks on old format
+                agent2_dec = input_data.get("agent2_view", {}).get("decision", {})
+                should_pass = agent2_dec.get("should_pass_to_agent_3", False)
+                if not should_pass:
+                    old_result = _normalize_result_no_trade(old_result, "Agent 2 rejected the trade")
+                else:
+                    if exec_dec == "ENTER NOW":
+                        if direction not in ("BULLISH", "BEARISH"):
+                            old_result = _normalize_result_no_trade(old_result, "invalid Agent 2 direction for live entry")
+                        elif entry_price <= 0 or stop_price <= 0 or target_price <= 0:
+                            old_result = _normalize_result_no_trade(old_result, "invalid entry/stop/target for live entry")
                         else:
+                            sizing = _compute_position_size(entry_price, stop_price, direction, rp)
+                            actual_rr, meets_min = _validate_rr(entry_price, stop_price, target_price, direction, rp["min_rr"])
+                            if sizing["position_size_shares"] == 0:
+                                old_result = _normalize_result_no_trade(old_result, f"position sizing failed: {sizing['sizing_note']}")
+                            elif not meets_min:
+                                old_result = _normalize_result_no_trade(old_result, f"trade rejected: RR 1:{actual_rr} below min {rp['min_rr']}:1")
+                            else:
+                                old_result["position_sizing"] = sizing
+                                old_result["risk_reward"] = f"1:{actual_rr}"
+
+                    elif exec_dec in ("WAIT FOR_PULLBACK", "WAIT FOR BREAKOUT"):
+                        exec_dec = "WAIT FOR PULLBACK" if "PULLBACK" in exec_dec else "WAIT FOR BREAKOUT"
+                        old_result["execution_decision"] = exec_dec
+
+                    if exec_dec in ("WAIT FOR PULLBACK", "WAIT FOR BREAKOUT"):
+                        ltp = _safe_float(input_data.get("live_execution_context", {}).get("ltp"), 0.0)
+                        if stop_price > 0 and ltp > 0 and direction in ("BULLISH", "BEARISH"):
+                            sizing = _compute_position_size(ltp, stop_price, direction, rp)
+                            sizing["sizing_note"] = "(projected)"
                             old_result["position_sizing"] = sizing
-                            old_result["risk_reward"] = f"1:{actual_rr}"
 
-                elif exec_dec in ("WAIT FOR_PULLBACK", "WAIT FOR BREAKOUT"):
-                    exec_dec = "WAIT FOR PULLBACK" if "PULLBACK" in exec_dec else "WAIT FOR BREAKOUT"
-                    old_result["execution_decision"] = exec_dec
+                    if exec_dec in ("NO TRADE", "AVOID CHASE"):
+                        if exec_dec == "NO TRADE":
+                            old_result = _normalize_result_no_trade(old_result, str(old_result.get("why_now_or_why_wait") or "execution rejected"))
+                        else:
+                            old_result["action"] = "AVOID"
 
-                if exec_dec in ("WAIT FOR PULLBACK", "WAIT FOR BREAKOUT"):
-                    ltp = _safe_float(input_data.get("live_execution_context", {}).get("ltp"), 0.0)
-                    if stop_price > 0 and ltp > 0 and direction in ("BULLISH", "BEARISH"):
-                        sizing = _compute_position_size(ltp, stop_price, direction, rp)
-                        sizing["sizing_note"] = "(projected)"
-                        old_result["position_sizing"] = sizing
+                result = _convert_old_to_new_schema(old_result, symbol)
 
-                if exec_dec in ("NO TRADE", "AVOID CHASE"):
-                    if exec_dec == "NO TRADE":
-                        old_result = _normalize_result_no_trade(old_result, str(old_result.get("why_now_or_why_wait") or "execution rejected"))
-                    else:
-                        old_result["action"] = "AVOID"
+            # ── Post-LLM deterministic validation & enforcement ──
+            result = _post_llm_validate_and_enforce(result, symbol, rp, input_data.get("live_execution_context", {}))
 
-            result = _convert_old_to_new_schema(old_result, symbol)
+            # ── Attach metadata ──
+            result["_source"] = result.get("_source", "gemini_agent3")
+            result["_model"] = MODEL_NAME
+            result["_risk_params"] = rp
+            result["_live_snapshot_used"] = input_data.get("live_execution_context", {})
 
-        # ── Post-LLM deterministic validation & enforcement ──
-        result = _post_llm_validate_and_enforce(result, symbol, rp, input_data.get("live_execution_context", {}))
+            # ── Validate final V2 schema ──
+            valid, err = validate_execution_schema(result)
+            if not valid:
+                print(f"      [WARN] Schema validation failed: {err} -- downgrading to AVOID")
+                return _build_avoid_result(symbol, f"schema validation failed: {err}", "agent3_schema_fail", rp)
 
-        # ── Attach metadata ──
-        result["_source"] = result.get("_source", "gemini_agent3")
-        result["_model"] = MODEL_NAME
-        result["_risk_params"] = rp
-        result["_live_snapshot_used"] = input_data.get("live_execution_context", {})
+            # ── Add backward compat ──
+            result = _add_backward_compat(result)
 
-        # ── Validate final V2 schema ──
-        valid, err = validate_execution_schema(result)
-        if not valid:
-            print(f"      [WARN] Schema validation failed: {err} -- downgrading to AVOID")
-            return _build_avoid_result(symbol, f"schema validation failed: {err}", "agent3_schema_fail", rp)
+            # ── Logging ──
+            v2 = result.get("_v2_execution_decision", {})
+            print(f"==============================")
+            print(f"[AGENT 3 DECISION]")
+            print(f"==============================")
+            print(f"action(v2): {v2.get('action')} | direction: {v2.get('direction')} | confidence: {v2.get('confidence')}")
+            print(f"compat: action={result.get('action')} | exec_dec={result.get('execution_decision')}")
+            tp = result.get("trade_plan", {})
+            if v2.get("action") == "ENTER_NOW":
+                ps = result.get("position_sizing", {})
+                print(f"\nEntry: {tp.get('entry_price')} | SL: {tp.get('stop_loss')} | Target: {tp.get('target_price')}")
+                print(f"RR: {tp.get('risk_reward')} | Qty: {ps.get('quantity')} | Risk: Rs.{ps.get('risk_amount')}")
+            else:
+                print(f"Reason: {v2.get('reason', '').encode('ascii', errors='replace').decode('ascii')}")
+            print(f"==============================\n")
 
-        # ── Add backward compat ──
-        result = _add_backward_compat(result)
+            return result
 
-        # ── Logging ──
-        v2 = result.get("_v2_execution_decision", {})
-        print(f"==============================")
-        print(f"[AGENT 3 DECISION]")
-        print(f"==============================")
-        print(f"action(v2): {v2.get('action')} | direction: {v2.get('direction')} | confidence: {v2.get('confidence')}")
-        print(f"compat: action={result.get('action')} | exec_dec={result.get('execution_decision')}")
-        tp = result.get("trade_plan", {})
-        if v2.get("action") == "ENTER_NOW":
-            ps = result.get("position_sizing", {})
-            print(f"\nEntry: {tp.get('entry_price')} | SL: {tp.get('stop_loss')} | Target: {tp.get('target_price')}")
-            print(f"RR: {tp.get('risk_reward')} | Qty: {ps.get('quantity')} | Risk: Rs.{ps.get('risk_amount')}")
-        else:
-            print(f"Reason: {v2.get('reason', '')}")
-        print(f"==============================\n")
+        except Exception as e:
+            err_str = str(e)
+            is_503 = "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str
+            if is_503 and attempt < max_retries:
+                wait_sec = 8 * attempt
+                print(f"      [AGENT 3] 503 for {symbol} (attempt {attempt}/{max_retries}) — retrying in {wait_sec}s...")
+                _time.sleep(wait_sec)
+                continue
+            err_msg = err_str.encode('ascii', errors='replace').decode('ascii')
+            print(f"\n[ERROR] Gemini Agent 3 failed: {err_msg}\n")
+            return _fallback_execution(input_data, rp, llm_error=err_str)
 
-        return result
-
-    except Exception as e:
-        print(f"\n[ERROR] Gemini Agent 3 failed: {e}\n")
-        return _fallback_execution(input_data, rp, llm_error=str(e))
 
 
 # ---------------------------

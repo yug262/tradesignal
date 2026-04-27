@@ -362,14 +362,58 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
                 "live_execution_context": live_execution_context
             }
 
-            # ── Build technical_context from Agent 2's requested_indicators ──
-            requested_indicators = agent2_view.get("requested_indicators", [])
-            trade_mode = agent2_view.get("trade_mode", sig.trade_mode or "INTRADAY")
-            bias = agent2_view.get("direction", "BULLISH")
-            
-            indicators_to_compute = requested_indicators if requested_indicators else get_default_indicators(trade_mode, bias)
-            
-            if indicators_to_compute and isinstance(indicators_to_compute, list):
+            # ── Read Agent 2.5 technical analysis (pre-computed) ──
+            exec_data = sig.execution_data if isinstance(sig.execution_data, dict) else {}
+            agent25_data = exec_data.get("technical_analysis_data")
+            requested_indicators = []
+
+            if agent25_data and isinstance(agent25_data, dict):
+                agent3_input["agent25_technical_analysis"] = agent25_data
+                ta = agent25_data.get("technical_analysis", {})
+                overall = ta.get("overall", {})
+                handoff = ta.get("agent_3_handoff", {})
+                requested_indicators = exec_data.get("indicators_computed", [])
+
+                print(f"      [AGENT 2.5] {sig.symbol}: bias={overall.get('technical_bias')} "
+                      f"confidence={overall.get('confidence')} grade={overall.get('technical_grade')} "
+                      f"go_no_go={handoff.get('technical_go_no_go')}")
+
+                # Also pass legacy technical_context for backward compatibility
+                agent3_input["technical_context"] = {
+                    "requested_by_agent2": requested_indicators,
+                    "indicator_values": {},
+                    "technical_warnings": ta.get("risks", []),
+                    "technical_confirmations": ta.get("what_agent_3_should_care_about", []),
+                }
+
+                if handoff.get("technical_go_no_go") in ["WAIT", "NO_GO"]:
+                    print(f"      [SKIP] {sig.symbol}: Agent 2.5 technical_go_no_go is {handoff.get('technical_go_no_go')} — skipping execution planning.")
+                    sig.execution_status = "skipped"
+                    sig.executed_at = _now_ms()
+                    exec_data_new = dict(exec_data)
+                    exec_data_new["action"] = "AVOID"
+                    exec_data_new["execution_decision"] = "NO TRADE"
+                    exec_data_new["why_now_or_why_wait"] = handoff.get("go_no_go_reason", "Agent 2.5 determined it is not a GO.")
+                    exec_data_new["_source"] = "agent25_skip"
+                    sig.execution_data = exec_data_new
+                    summary["avoided"] += 1
+                    continue
+            else:
+                # Fallback: compute indicators directly (legacy path)
+                print(f"      [WARN] {sig.symbol}: No Agent 2.5 data — using legacy indicator path")
+                trade_mode = sig.trade_mode or "INTRADAY"
+                if trade_mode == "INTRADAY":
+                    requested_indicators = [
+                        {"name": "RSI", "timeframe": "1m", "reason": "Check short-term exhaustion"},
+                        {"name": "EMA", "timeframe": "1m", "reason": "Check immediate trend"},
+                        {"name": "ATR", "timeframe": "1m", "reason": "Estimate volatility"},
+                    ]
+                else:
+                    requested_indicators = [
+                        {"name": "RSI", "timeframe": "1D", "reason": "Check daily exhaustion"},
+                        {"name": "EMA", "timeframe": "1D", "reason": "Check broader trend"},
+                        {"name": "MACD", "timeframe": "1D", "reason": "Check momentum"},
+                    ]
                 try:
                     technical_context = build_technical_context(
                         db=db,
@@ -470,7 +514,40 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
                         sig.executed_at = _now_ms()
                         existing_data = sig.execution_data if isinstance(sig.execution_data, dict) else {}
                         existing_data.update(execution_plan)
-                        sig.execution_data = existing_data
+
+                        # ── Also write flat keys the frontend reads directly ──
+                        # Frontend reads: eData.action, eData.execution_decision, eData.confidence,
+                        # eData.trade_mode, eData.entry.price, eData.target.price, eData.stop_loss.price
+                        existing_data["action"] = v2["action"]
+                        existing_data["execution_decision"] = execution_plan.get("execution_decision", {}).get("action", v2["action"]) if isinstance(execution_plan.get("execution_decision"), dict) else v2["action"]
+                        existing_data["confidence"] = {"LOW": 30, "MEDIUM": 60, "HIGH": 85}.get(v2["confidence"], 50)
+                        existing_data["trade_mode"] = v2["trade_mode"]
+                        existing_data["direction"] = v2["direction"]
+                        existing_data["why_now_or_why_wait"] = v2["reason"]
+                        existing_data["_source"] = "gemini_agent3"
+
+                        # Price levels as nested dicts (frontend reads eData.entry.price, eData.target.price, eData.stop_loss.price)
+                        tp = execution_plan.get("trade_plan", {}) or {}
+                        existing_data["entry"] = {
+                            "price": v2["entry_price"] or tp.get("entry_price", 0),
+                            "type": execution_plan.get("order_payload", {}).get("order_type", "MARKET"),
+                            "notes": tp.get("plan_notes", ""),
+                        }
+                        existing_data["target"] = {
+                            "price": v2["target_price"] or tp.get("target_price", 0),
+                            "notes": tp.get("invalidation", ""),
+                        }
+                        existing_data["stop_loss"] = {
+                            "price": v2["stop_loss"] or tp.get("stop_loss", 0),
+                            "type": "hard",
+                        }
+                        existing_data["risk_reward"] = v2["risk_reward"] or tp.get("risk_reward", 0)
+                        existing_data["position_sizing"] = execution_plan.get("position_sizing", {})
+
+                        # Assign as a fresh copy so SQLAlchemy detects the change
+                        sig.execution_data = dict(existing_data)
+                        from sqlalchemy.orm.attributes import flag_modified
+                        flag_modified(sig, "execution_data")
 
                         # ── V2 Logging ────────────────────────────────────────────
                         print(f"      [AGENT 3] {sig.symbol}: V2 action={v2_action}")
@@ -538,7 +615,7 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
                             sig.execution_status = "waiting"
                             sig.status = "confirmed"  # Retryable
                             summary["avoided"] += 1
-                            print(f"      [AGENT 3] waiting={v2_action}: {v2['reason']}")
+                            print(f"      [AGENT 3] waiting={v2_action}: {v2['reason'].encode('ascii', errors='replace').decode('ascii')}")
                             _log_action(db, "Agent 3 (Execution)", sig.symbol, "WAIT",
                                         f"Execution waiting: {v2_action} — {v2['reason']}",
                                         confidence=old_conf)
@@ -673,12 +750,27 @@ def run_execution_from_live_news(
         }
         direction = direction_map.get(bias, "NEUTRAL")
 
-        # Map should_trade to Agent 2's decision field
-        # Agent 3 hard-gates on "NO TRADE" so we must set this correctly
-        agent2_decision = "TRADE" if should_trade else "NO TRADE"
-
         agent2_view = {
-            "decision": agent2_decision,
+            "decision": {
+                "should_pass_to_agent_3": should_trade,
+                "agent_3_instruction": "PROCEED" if should_trade else "DO_NOT_PROCEED",
+                "pass_reason": live_news_output.get("trade_reason", ""),
+            },
+            "validation": {
+                "status": "CONFIRMED" if should_trade else "INVALIDATED",
+                "reason": live_news_output.get("trade_reason", ""),
+            },
+            "stock": {
+                "symbol": symbol,
+                "company_name": symbol,
+                "exchange": "NSE",
+            },
+            "agent_1_view": {
+                "final_bias": bias,
+                "final_confidence": "HIGH" if confidence >= 70 else "MEDIUM" if confidence >= 50 else "LOW",
+                "executive_summary": live_news_output.get("what_happened", ""),
+                "combined_trading_thesis": live_news_output.get("trading_thesis", ""),
+            },
             "trade_mode": "INTRADAY",
             "direction": direction,
             "remaining_impact": live_news_output.get("remaining_move_estimate", "UNCLEAR"),
@@ -743,11 +835,11 @@ def run_execution_from_live_news(
             ltp = live_data.get("last_close") or live_data.get("ltp", 0)
 
             if ltp and ltp > 0:
-                indicators_to_compute = live_news_output.get("requested_indicators")
-                if not indicators_to_compute:
-                    bias_condition = live_news_output.get("market_bias", "BULLISH")
-                    indicators_to_compute = get_default_indicators("INTRADAY", bias_condition)
-                
+                default_indicators = [
+                    {"name": "RSI", "timeframe": "1m", "period": 14},
+                    {"name": "EMA", "timeframe": "1m", "period": 20},
+                    {"name": "ATR", "timeframe": "1m", "period": 14}
+                ]
                 try:
                     technical_context = build_technical_context(
                         db=db,

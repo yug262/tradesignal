@@ -1,10 +1,28 @@
-"""FastAPI backend — replaces the Motoko/ICP actor.
-
-Run with:  uvicorn main:app --reload --port 8000
-"""
-
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import logging
+import sys
+
+# Configure global logging — must use force=True or explicit handler so
+# Uvicorn's reload mode (which calls basicConfig first) doesn't swallow our logs.
+root_logger = logging.getLogger()
+root_logger.setLevel(logging.INFO)
+
+# Only add handler if none exist yet (idempotent across reloads)
+if not root_logger.handlers:
+    _handler = logging.StreamHandler(sys.stdout)
+    _handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+    root_logger.addHandler(_handler)
+else:
+    # Uvicorn already set a handler — make sure it includes our format and goes to stdout
+    for _h in root_logger.handlers:
+        _h.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+
+# Silence noisy third-party loggers
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+logging.getLogger("google_genai").setLevel(logging.WARNING)
+logging.getLogger("google").setLevel(logging.WARNING)
 
 from models import SystemConfig, ProcessingState
 from routers import news, config, dashboard, stocks, agent, paper_trading

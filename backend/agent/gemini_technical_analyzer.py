@@ -14,8 +14,8 @@ from dotenv import load_dotenv
 load_dotenv()
 logger = logging.getLogger(__name__)
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
-MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+MODEL_NAME = os.getenv("GEMINI_MODEL")
 
 _client = None
 if GEMINI_API_KEY and GEMINI_API_KEY != "your_gemini_api_key_here":
@@ -367,44 +367,54 @@ def analyze_technicals(
         sr_json=json.dumps(sr_levels, indent=2),
     )
 
-    try:
-        response = _client.models.generate_content(
-            model=MODEL_NAME,
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=AGENT25_SYSTEM_INSTRUCTION,
-                temperature=0.1,
-                max_output_tokens=2048,
-            ),
-        )
-
-        text = response.text.strip()
-        if text.startswith("```"):
-            text = text.split("\n", 1)[1] if "\n" in text else text[3:]
-        if text.endswith("```"):
-            text = text[:-3]
-        if text.startswith("json"):
-            text = text[4:]
-        text = text.strip()
-
-        result = json.loads(text)
-
+    import time as _time
+    max_retries = 5
+    for attempt in range(1, max_retries + 1):
         try:
-            result = validate_agent25_output(result, agent2_data)
-        except Agent25ValidationError as ve:
-            logger.error("[AGENT 2.5] VALIDATION FAILED for %s: %s", symbol, ve)
+            response = _client.models.generate_content(
+                model=MODEL_NAME,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    system_instruction=AGENT25_SYSTEM_INSTRUCTION,
+                    temperature=0.1,
+                    response_mime_type="application/json",
+                ),
+            )
+
+            text = response.text.strip()
+            if text.startswith("```"):
+                text = text.split("\n", 1)[1] if "\n" in text else text[3:]
+            if text.endswith("```"):
+                text = text[:-3]
+            if text.startswith("json"):
+                text = text[4:]
+            text = text.strip()
+
+            result = json.loads(text)
+
+            try:
+                result = validate_agent25_output(result, agent2_data)
+            except Agent25ValidationError as ve:
+                logger.error("[AGENT 2.5] VALIDATION FAILED for %s: %s", symbol, ve)
+                return _fallback_technical_analysis(symbol, agent2_data, candle_data, indicator_data, sr_levels)
+
+            result["_source"] = "gemini_agent25"
+            result["_model"] = MODEL_NAME
+            return result
+
+        except json.JSONDecodeError as e:
+            logger.error("[AGENT 2.5] JSON parse error for %s: %s", symbol, e)
             return _fallback_technical_analysis(symbol, agent2_data, candle_data, indicator_data, sr_levels)
-
-        result["_source"] = "gemini_agent25"
-        result["_model"] = MODEL_NAME
-        return result
-
-    except json.JSONDecodeError as e:
-        logger.error("[AGENT 2.5] JSON parse error for %s: %s", symbol, e)
-        return _fallback_technical_analysis(symbol, agent2_data, candle_data, indicator_data, sr_levels)
-    except Exception as e:
-        logger.error("[AGENT 2.5] Gemini error for %s: %s", symbol, e)
-        return _fallback_technical_analysis(symbol, agent2_data, candle_data, indicator_data, sr_levels)
+        except Exception as e:
+            err_str = str(e)
+            is_503 = "503" in err_str or "UNAVAILABLE" in err_str or "high demand" in err_str
+            if is_503 and attempt < max_retries:
+                wait_sec = 8 * attempt
+                logger.warning("[AGENT 2.5] 503 for %s (attempt %d/%d) — retrying in %ds...", symbol, attempt, max_retries, wait_sec)
+                _time.sleep(wait_sec)
+                continue
+            logger.error("[AGENT 2.5] Gemini error for %s: %s", symbol, e)
+            return _fallback_technical_analysis(symbol, agent2_data, candle_data, indicator_data, sr_levels)
 
 
 # ── Fallback (Rule Engine) ──────────────────────────────────────────────────
