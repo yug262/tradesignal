@@ -264,46 +264,6 @@ def _save_live_event(
     return event
 
 
-# ── Agent 3 Trigger ───────────────────────────────────────────────────────────
-
-def _try_trigger_agent3(symbol: str, live_event: db_models.DBLiveNewsEvent, db: Session):
-    """
-    Optionally trigger Agent 3 (Execution Planner) for a high-confidence trade.
-    Looks up the latest CONFIRMED signal for this symbol and passes the live
-    analysis context to Agent 3's execution pipeline.
-    """
-    try:
-        from agent.execution.execution_agent import run_execution_for_signal
-        from datetime import date
-
-        market_date = date.today().strftime("%Y-%m-%d")
-
-        # Find existing confirmed signal for this symbol today (if any)
-        signal = (
-            db.query(db_models.DBTradeSignal)
-            .filter(db_models.DBTradeSignal.symbol == symbol)
-            .filter(db_models.DBTradeSignal.market_date == market_date)
-            .filter(db_models.DBTradeSignal.confirmation_status == "confirmed")
-            .first()
-        )
-
-        if signal:
-            print(f"  [LIVE AGENT] Triggering Agent 3 for existing signal: {signal.id}")
-            run_execution_for_signal(signal.id, db=db)
-        else:
-            print(
-                f"  [LIVE AGENT] No confirmed signal for {symbol} today — "
-                f"Agent 3 requires a prior Agent 1+2 signal. Skipping."
-            )
-
-        # Mark event as triggering agent3
-        live_event.agent3_triggered = True
-        db.commit()
-
-    except Exception as e:
-        print(f"  [LIVE AGENT] Agent 3 trigger failed for {symbol}: {e}")
-        traceback.print_exc()
-
 
 # ── Main Run Function ─────────────────────────────────────────────────────────
 
@@ -439,36 +399,28 @@ def run_live_news_monitor() -> dict:
 
                 symbols_analyzed += 1
 
-                # 5f. Always trigger Agent 3 immediately with the live news output.
-                # Agent 3 decides internally: ENTER NOW / WAIT / NO TRADE.
-                print(f"     Triggering Agent 3 immediately...")
-                try:
-                    from agent.execution.execution_agent import run_execution_from_live_news
-                    agent3_result = run_execution_from_live_news(
-                        symbol=symbol,
-                        live_news_output=gemini_output,
-                        db=db,
-                    )
-                    exec_dec = agent3_result.get("execution_decision", "NO TRADE")
-                    paper_trade = agent3_result.get("paper_trade")
-
-                    if exec_dec == "ENTER NOW":
-                        trade_signals += 1
-                        agent3_triggered += 1
-                        if paper_trade and paper_trade.get("success"):
-                            print(f"     [PAPER TRADE CREATED] {paper_trade.get('trade_id')}")
+                # 5f. Trigger the full pipeline (Agent 2.5 -> 3) if confident
+                if should_trade and confidence >= AGENT3_TRIGGER_CONFIDENCE:
+                    print(f"     Confidence high ({confidence}) -> Triggering full pipeline (2.5 -> 3)...")
+                    try:
+                        from agent.execution.execution_agent import trigger_pipeline_from_live_news
+                        result = trigger_pipeline_from_live_news(
+                            symbol=symbol,
+                            live_news_output=gemini_output,
+                            db=db,
+                        )
+                        if result.get("success"):
+                            trade_signals += 1
+                            agent3_triggered += 1
+                            live_event.agent3_triggered = True
+                            db.commit()
                         else:
-                            print(f"     [ENTER NOW] No paper trade (plan incomplete or rejected)")
-                    else:
-                        print(f"     [AGENT 3] Decision: {exec_dec}")
-
-                    # Update the stored live event to mark Agent 3 was triggered
-                    live_event.agent3_triggered = True
-                    db.commit()
-
-                except Exception as e3:
-                    print(f"     [AGENT 3 ERROR] {e3}")
-                    traceback.print_exc()
+                            print(f"     [PIPELINE] Failed to trigger: {result.get('error')}")
+                    except Exception as ep:
+                        print(f"     [PIPELINE ERROR] {ep}")
+                        traceback.print_exc()
+                else:
+                    print(f"     [LIVE AGENT] Confidence {confidence} below threshold {AGENT3_TRIGGER_CONFIDENCE} or should_trade=False. Skipping Agent 3.")
 
             except Exception as e:
                 err_msg = f"{symbol}: {e}"

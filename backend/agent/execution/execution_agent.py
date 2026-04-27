@@ -360,7 +360,8 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
                 "symbol": sig.symbol,
                 "company_name": sig.symbol,
                 "agent2_view": agent2_input_view,
-                "live_execution_context": live_execution_context
+                "live_execution_context": live_execution_context,
+                "live_news_context": agent2_view.get("live_news_context", {}) # Pass live news context if available
             }
 
             # ── Read Agent 2.5 technical analysis (pre-computed) ──
@@ -683,37 +684,20 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
 
 
 # =========================================================================
-# Agent 3 from Live News — called immediately after Live News Agent completes
+# Trigger Proper Pipeline from Live News (Agent 2.5 -> 3)
 # =========================================================================
 
-def run_execution_from_live_news(
+def trigger_pipeline_from_live_news(
     symbol: str,
     live_news_output: dict,
     db: Session = None,
-    risk_config: dict = None,
 ) -> dict:
     """
-    Trigger Agent 3 (Execution Planner) directly from a Live News Agent result.
+    Trigger the full trading pipeline starting from technical analysis (Agent 2.5)
+    based on a successful live news analysis result.
 
-    Unlike the standard run_execution_planner() which requires a prior confirmed
-    DBTradeSignal, this function works DIRECTLY from the live news analysis output
-    and immediately attempts to plan an execution (or reject it).
-
-    Pipeline:
-      1. Translate live_news_output -> agent2_view format Agent 3 expects
-      2. Fetch live technical data (indicators + chart)
-      3. Call plan_execution() with the translated input
-      4. If ENTER NOW + valid sizing -> create a paper trade
-      5. Return the full execution plan
-
-    Args:
-        symbol           : NSE symbol (e.g. "TCS")
-        live_news_output : The dict returned by gemini_live_analyzer.analyze_live()
-        db               : SQLAlchemy session (creates own if None)
-        risk_config      : Risk params dict (fetches from DB if None)
-
-    Returns:
-        dict with Agent 3 execution plan + metadata
+    Creates a synthetic confirmed signal and hands it off to Agent 2.5.
+    Agent 2.5 will then automatically trigger Agent 3 if technicals are GO.
     """
     own_session = False
     if db is None:
@@ -723,21 +707,10 @@ def run_execution_from_live_news(
     started_at = _now_ms()
     market_date = _market_date_str()
 
-    print(f"\n  [LIVE AGENT -> AGENT 3] Triggering Agent 3 for {symbol}...")
+    print(f"\n  [LIVE NEWS -> PIPELINE] Creating signal for {symbol}...")
 
     try:
-        # -- Step 1: Build risk_config from DB if not provided --
-        if not risk_config:
-            db_cfg = db.query(db_models.DBSystemConfig).first()
-            risk_config = {
-                "capital": db_cfg.capital if db_cfg else 100_000.0,
-                "max_loss_per_trade_pct": db_cfg.max_loss_per_trade_pct if db_cfg else 1.0,
-                "max_capital_per_trade_pct": db_cfg.max_capital_per_trade_pct if db_cfg else 20.0,
-                "min_rr": db_cfg.min_rr if db_cfg else 1.5,
-                "max_daily_loss_pct": db_cfg.max_daily_loss_pct if db_cfg else 3.0,
-            }
-
-        # -- Step 2: Translate live news output -> agent2_view format --
+        # -- Step 1: Translate live news output -> agent2_view format --
         bias = live_news_output.get("market_bias", "NEUTRAL")
         should_trade = live_news_output.get("should_trade", False)
         confidence = live_news_output.get("confidence", 0)
@@ -751,12 +724,14 @@ def run_execution_from_live_news(
         }
         direction = direction_map.get(bias, "NEUTRAL")
 
+        # Indicators Agent 2.5 should check (default set for live news)
+        indicators_to_check = {
+            "Trend": ["EMA", "VWAP"],
+            "Momentum": ["RSI", "MACD"],
+            "Volatility": ["ATR"],
+        }
+
         agent2_view = {
-            "decision": {
-                "should_pass_to_agent_3": should_trade,
-                "agent_3_instruction": "PROCEED" if should_trade else "DO_NOT_PROCEED",
-                "pass_reason": live_news_output.get("trade_reason", ""),
-            },
             "validation": {
                 "status": "CONFIRMED" if should_trade else "INVALIDATED",
                 "reason": live_news_output.get("trade_reason", ""),
@@ -772,221 +747,61 @@ def run_execution_from_live_news(
                 "executive_summary": live_news_output.get("what_happened", ""),
                 "combined_trading_thesis": live_news_output.get("trading_thesis", ""),
             },
-            "trade_mode": "INTRADAY",
+            "trade_suitability": {
+                "mode": "INTRADAY",
+            },
+            "timeframe_plan": {
+                "primary_timeframe": "1m",
+            },
+            "indicators_to_check": indicators_to_check,
             "direction": direction,
-            "remaining_impact": live_news_output.get("remaining_move_estimate", "UNCLEAR"),
-            "priced_in_status": (
-                "MOSTLY_PRICED_IN"
-                if live_news_output.get("reaction_magnitude_pct", 0) > 2.0
-                else "NOT_PRICED_IN"
-            ),
-            "priority": "HIGH" if confidence >= 70 else "MEDIUM" if confidence >= 50 else "LOW",
             "confidence": confidence,
-            "why_tradable_or_not": live_news_output.get("trade_reason", ""),
-            "key_confirmations": [live_news_output.get("what_is_confirmed", "")],
-            "warning_flags": [live_news_output.get("invalidation_logic", "")],
-            "invalid_if": [live_news_output.get("invalidation_logic", "")],
-            "final_summary": (
-                f"{live_news_output.get('what_happened', '')} | "
-                f"Bias: {bias} | "
-                f"Market reacted: {live_news_output.get('reaction_magnitude_pct', 0):.1f}%"
-            ),
-            "trading_thesis": live_news_output.get("trading_thesis", ""),
-            "why_news_matters": live_news_output.get("why_news_matters", ""),
-            # Source marker so downstream knows this came from live news
-            "_source": "live_news_agent",
-            "_live_news_confidence": confidence,
-        }
-
-        # -- Step 3: Build agent3 input --
-        agent3_input = {
-            "symbol": symbol,
-            "company_name": symbol,
-            "agent2_view": agent2_view,
-            "live_execution_context": {},   # Will be freshly fetched inside plan_execution()
-            "live_news_context": {           # Extra context for Gemini to read
+            "live_news_context": {
                 "what_happened": live_news_output.get("what_happened", ""),
                 "why_news_matters": live_news_output.get("why_news_matters", ""),
-                "market_bias": bias,
                 "trading_thesis": live_news_output.get("trading_thesis", ""),
-                "invalidation_logic": live_news_output.get("invalidation_logic", ""),
-                "market_reacted": live_news_output.get("market_reacted", False),
                 "reaction_magnitude_pct": live_news_output.get("reaction_magnitude_pct", 0),
-                "remaining_move_estimate": live_news_output.get("remaining_move_estimate", ""),
-                "gemini_confidence": confidence,
-            },
-            "technical_context": {
-                "requested_by_agent2": [],
-                "indicator_values": {},
-                "technical_warnings": [],
-                "technical_confirmations": [],
-            },
+            }
         }
 
-        # -- Step 4: Optionally build technical indicators --
-        try:
-            from services.indicator_service import build_technical_context
-            from services.chart_generator import generate_technical_chart
-
-            # Fetch fresh LTP for indicator building
-            from agent.data_collector import fetch_stock_data_for_symbols
-            live_data_map = fetch_stock_data_for_symbols([symbol])
-            live_data = live_data_map.get(symbol, {})
-            # Note: fetch_stock_data_for_symbols uses 'last_close' as LTP
-            ltp = live_data.get("last_close") or live_data.get("ltp", 0)
-
-            if ltp and ltp > 0:
-                default_indicators = [
-                    {"name": "RSI", "timeframe": "1m", "period": 14},
-                    {"name": "EMA", "timeframe": "1m", "period": 20},
-                    {"name": "ATR", "timeframe": "1m", "period": 14}
-                ]
-                try:
-                    technical_context = build_technical_context(
-                        db=db,
-                        symbol=symbol,
-                        trade_mode="INTRADAY",
-                        requested_indicators=default_indicators,
-                        ltp=ltp,
-                    )
-                    agent3_input["technical_context"] = technical_context
-                    print(f"     [TECH] {symbol}: {len(technical_context.get('indicator_values', {}))} indicators")
-                except Exception as te:
-                    print(f"     [WARN] {symbol}: Technical context failed: {te}")
-
-                # Generate chart
-                chart_image_bytes = None
-                try:
-                    chart_image_bytes = generate_technical_chart(
-                        symbol=symbol,
-                        trade_mode="INTRADAY",
-                        requested_indicators=indicators_to_compute,
-                        ltp=ltp,
-                        direction=direction,
-                    )
-                    if chart_image_bytes:
-                        print(f"     [CHART] {symbol}: Chart generated ({len(chart_image_bytes) // 1024}KB)")
-                except Exception as ce:
-                    print(f"     [WARN] {symbol}: Chart failed: {ce}")
-                    chart_image_bytes = None
-            else:
-                chart_image_bytes = None
-
-        except Exception as e:
-            print(f"     [WARN] {symbol}: Could not build technical context: {e}")
-            chart_image_bytes = None
-
-        # -- Step 5: Call plan_execution() (Agent 3 Gemini prompt) --
-        execution_plan = plan_execution(
-            input_data=agent3_input,
-            risk_config=risk_config,
-            chart_image_bytes=chart_image_bytes,
+        # -- Step 2: Create a synthetic confirmed signal --
+        sig_id = f"live-news-{symbol}-{started_at}"
+        
+        synthetic_signal = db_models.DBTradeSignal(
+            id=sig_id,
+            symbol=symbol,
+            signal_type="BUY" if direction == "BULLISH" else "SELL" if direction == "BEARISH" else "WATCH",
+            trade_mode="INTRADAY",
+            confidence=float(confidence),
+            reasoning={"source": "live_news_agent", "live_output": live_news_output},
+            generated_at=started_at,
+            market_date=market_date,
+            status="confirmed",
+            confirmation_status="confirmed",
+            confirmed_at=started_at,
+            confirmation_data=agent2_view,
+            execution_status="pending",
         )
+        db.add(synthetic_signal)
+        db.commit()
 
-        action = execution_plan.get("action", "AVOID").upper()
-        exec_dec = execution_plan.get("execution_decision", "NO TRADE").upper()
-        exec_confidence = execution_plan.get("confidence", 0)
-
-        print(
-            f"     [AGENT 3 RESULT] {symbol}: {action} | {exec_dec} | "
-            f"Confidence: {exec_confidence}"
-        )
-        print(f"     {execution_plan.get('why_now_or_why_wait', '')}")
-
-        # -- Step 6: Create paper trade if ENTER NOW + valid sizing --
-        paper_trade_result = None
-        if exec_dec == "ENTER NOW":
-            validated = _validate_execution_plan(execution_plan)
-            if validated:
-                # Create a lightweight synthetic signal so paper trade engine works
-                from agent.paper_trading_engine import auto_create_from_execution, _log_action
-
-                # Upsert a synthetic trade signal to serve as the paper trade anchor
-                sig_id = f"live-exec-{symbol}-{started_at}"
-                existing_sig = db.query(db_models.DBTradeSignal).filter(
-                    db_models.DBTradeSignal.id == sig_id
-                ).first()
-
-                if not existing_sig:
-                    synthetic_signal = db_models.DBTradeSignal(
-                        id=sig_id,
-                        symbol=symbol,
-                        signal_type="BUY" if action == "BUY" else "SELL",
-                        trade_mode="INTRADAY",
-                        entry_price=validated["entry_price"],
-                        stop_loss=validated["stop_loss"],
-                        target_price=validated["target_price"],
-                        risk_reward=float(validated.get("capital_used_pct", 0)),
-                        confidence=float(exec_confidence),
-                        reasoning={"source": "live_news_agent", "live_output": live_news_output},
-                        news_article_ids=[],
-                        stock_snapshot={},
-                        generated_at=started_at,
-                        market_date=market_date,
-                        status="planned",
-                        confirmation_status="confirmed",
-                        confirmed_at=started_at,
-                        confirmation_data=agent2_view,
-                        execution_status="planned",
-                        executed_at=started_at,
-                        execution_data=execution_plan,
-                    )
-                    db.add(synthetic_signal)
-                    db.flush()
-                    sig_for_trade = synthetic_signal
-                else:
-                    existing_sig.execution_data = execution_plan
-                    existing_sig.executed_at = started_at
-                    sig_for_trade = existing_sig
-
-                paper_trade_result = auto_create_from_execution(db, sig_for_trade)
-                db.commit()
-
-                if paper_trade_result and paper_trade_result.get("success"):
-                    print(f"     [PAPER TRADE] Created: {paper_trade_result.get('trade_id')}")
-                    _log_action(
-                        db, "Agent 3 (Live News)", symbol, action,
-                        f"Live news triggered ENTER NOW. SL: {validated['stop_loss']}, "
-                        f"Target: {validated['target_price']}",
-                        confidence=exec_confidence,
-                    )
-                else:
-                    err = paper_trade_result.get("error", "unknown") if paper_trade_result else "None returned"
-                    print(f"     [PAPER TRADE] Failed: {err}")
-            else:
-                print(f"     [AGENT 3] ENTER NOW but plan incomplete — no paper trade created")
-        else:
-            db.commit()
-
-        duration = _now_ms() - started_at
+        # -- Step 3: Call Agent 2.5 (Technical Analysis) --
+        # This will automatically trigger Agent 3 if technicals look good.
+        print(f"  [LIVE NEWS -> PIPELINE] Triggering Agent 2.5 for {symbol}...")
+        from agent.technical_analysis.technical_analysis_agent import run_technical_analysis
+        ta_result = run_technical_analysis(db, signal_ids=[sig_id])
 
         return {
+            "success": True,
             "symbol": symbol,
-            "source": "live_news_agent",
-            "agent3_triggered": True,
-            "action": action,
-            "execution_decision": exec_dec,
-            "confidence": exec_confidence,
-            "why": execution_plan.get("why_now_or_why_wait", ""),
-            "final_summary": execution_plan.get("final_summary", ""),
-            "paper_trade": paper_trade_result,
-            "execution_plan": execution_plan,
-            "duration_ms": duration,
+            "signal_id": sig_id,
+            "ta_result": ta_result
         }
 
     except Exception as e:
-        print(f"     [AGENT 3 ERROR] {symbol}: {e}")
+        print(f"  [PIPELINE ERROR] {symbol}: {e}")
         traceback.print_exc()
-        try:
-            db.rollback()
-        except Exception:
-            pass
-        return {
-            "symbol": symbol,
-            "source": "live_news_agent",
-            "agent3_triggered": False,
-            "error": str(e),
-        }
+        return {"success": False, "error": str(e)}
     finally:
         if own_session:
             db.close()
