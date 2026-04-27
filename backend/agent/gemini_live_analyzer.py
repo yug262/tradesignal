@@ -30,12 +30,15 @@ Output (JSON):
 
 import os
 import json
+import logging
 from datetime import datetime, timezone, timedelta
 from google import genai
 from google.genai import types
 from dotenv import load_dotenv
 
 load_dotenv()
+
+logger = logging.getLogger("live_analyzer")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
@@ -209,7 +212,10 @@ def analyze_live(
                         confidence, _source, _model
     """
     if not _client:
+        logger.warning(f"Gemini API key not configured. Using fallback for {symbol}.")
         return _fallback_analysis(symbol, new_news, current_price, publish_time_price)
+
+    logger.info(f"Starting live analysis for {symbol} with {len(new_news)} breaking news articles...")
 
     now_ist = datetime.now(IST)
     market_date = now_ist.strftime("%Y-%m-%d")
@@ -275,13 +281,15 @@ def analyze_live(
 
         result["_source"] = "gemini_live"
         result["_model"] = MODEL_NAME
+        
+        logger.info(f"Live analysis for {symbol} completed. should_trade={result['should_trade']}, confidence={result['confidence']}")
         return result
 
     except json.JSONDecodeError as e:
-        print(f"  [LIVE ANALYZER] Invalid JSON for {symbol}: {e}")
+        logger.error(f"Invalid JSON for {symbol}: {e}")
         return _fallback_analysis(symbol, new_news, current_price, publish_time_price)
     except Exception as e:
-        print(f"  [LIVE ANALYZER] Gemini error for {symbol}: {e}")
+        logger.error(f"Gemini error for {symbol}: {e}")
         return _fallback_analysis(symbol, new_news, current_price, publish_time_price)
 
 
