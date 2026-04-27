@@ -2,13 +2,79 @@ import httpx
 import json
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+import time
+from datetime import datetime, timezone
 
 import db_models
 from database import get_db
 from models import NewsArticleRef, PaginatedNewsResponse
 
 router = APIRouter(prefix="/api/news", tags=["news"])
+
+def _parse_timestamp(item: dict, keys: List[str], default_now: bool = True) -> Optional[int]:
+    """Robustly parse timestamp from various field names and formats."""
+    val = None
+    for k in keys:
+        if k in item and item[k] is not None:
+            val = item[k]
+            break
+            
+    if val is None:
+        return int(time.time() * 1000) if default_now else None
+        
+    # Case 1: Already an integer/float (assume seconds or ms)
+    if isinstance(val, (int, float)):
+        if val > 1e12: # Milliseconds
+            return int(val)
+        if val > 1e8: # Likely seconds
+            return int(val * 1000)
+        return int(time.time() * 1000) if default_now else None
+        
+    # Case 2: String
+    if isinstance(val, str):
+        # Try numeric string
+        try:
+            num = float(val)
+            if num > 1e12: return int(num)
+            if num > 1e8: return int(num * 1000)
+        except ValueError:
+            pass
+            
+        # Try ISO format
+        try:
+            # handle 'Z' or '+0000' or space
+            clean_val = val.replace("Z", "+00:00").replace(" ", "T")
+            dt = datetime.fromisoformat(clean_val)
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            parsed = int(dt.timestamp() * 1000)
+            # Log successful parse
+            with open("news_parse_log.txt", "a") as f:
+                f.write(f"SUCCESS: {val} -> {parsed} (ISO)\n")
+            return parsed
+        except Exception as e:
+            with open("news_parse_log.txt", "a") as f:
+                f.write(f"ERROR ISO: {val} -> {e}\n")
+            pass
+            
+        # Try common formats
+        for fmt in ["%Y-%m-%d %H:%M:%S", "%d/%m/%Y %H:%M:%S", "%a, %d %b %Y %H:%M:%S %z", "%a, %d %b %Y %H:%M:%S"]:
+            try:
+                dt = datetime.strptime(val, fmt)
+                if dt.tzinfo is None:
+                    dt = dt.replace(tzinfo=timezone.utc)
+                parsed = int(dt.timestamp() * 1000)
+                with open("news_parse_log.txt", "a") as f:
+                    f.write(f"SUCCESS: {val} -> {parsed} (STRPTIME {fmt})\n")
+                return parsed
+            except Exception:
+                continue
+                
+    fallback = int(time.time() * 1000) if default_now else None
+    with open("news_parse_log.txt", "a") as f:
+        f.write(f"FALLBACK: {val} -> {fallback}\n")
+    return fallback
 
 @router.get("", response_model=PaginatedNewsResponse)
 def get_news(
@@ -67,7 +133,20 @@ def get_news_grouped(db: Session = Depends(get_db)):
             "news_relevance": a.news_relevance,
             "affected_symbols": a.affected_symbols,
             "raw_analysis_data": a.raw_analysis_data,
-            "processing_status": a.processing_status
+            "processing_status": a.processing_status,
+            "link": a.link,
+            "market_bias": a.market_bias,
+            "signal_bucket": a.signal_bucket,
+            "primary_symbol": a.primary_symbol,
+            "affected_sectors": a.affected_sectors,
+            "affected_stocks": a.affected_stocks,
+            "raw_full_data": a.raw_full_data,
+            "news_impact_level": a.news_impact_level,
+            "news_reason": a.news_reason,
+            "event_id": a.event_id,
+            "event_title": a.event_title,
+            "confidence": a.confidence,
+            "horizon": a.horizon
         }
         
         symbols = a.affected_symbols if a.affected_symbols else ["GENERAL"]
@@ -118,43 +197,50 @@ def fetch_news(db: Session = Depends(get_db)):
             
             from datetime import datetime
             
-            for item in articles_list:
+            for i, item in enumerate(articles_list):
                 if not isinstance(item, dict): continue
+                if i == 0:
+                    print(f"DEBUG: First article keys: {list(item.keys())}")
+                    print(f"DEBUG: First article sample values: published={item.get('published')}, published_at={item.get('published_at')}, timestamp={item.get('timestamp')}")
                 
                 # Extract ID as string
                 item_id = str(item.get("id", ""))
                 if not item_id: continue
                     
-                impact_score = float(item.get("impact_score") or 0)
-                # Lowered threshold to 0.0 to ensure data flows during setup
-                if impact_score < 4: 
+                # Map analysis data
+                raw_data = item.get("analysis_data") or item.get("raw_analysis_data", {})
+                core_view = raw_data.get("core_view", {}) if isinstance(raw_data, dict) else {}
+                
+                # Intelligence Fallbacks (if top-level is null, check analysis_data.core_view)
+                impact_score = float(item.get("impact_score") if item.get("impact_score") is not None else core_view.get("impact_score", 0))
+                market_bias = item.get("market_bias") or core_view.get("market_bias")
+                confidence = item.get("confidence") if item.get("confidence") is not None else core_view.get("confidence", 0)
+                horizon = item.get("horizon") or core_view.get("horizon")
+                exec_summary = item.get("executive_summary") or raw_data.get("executive_summary") or item.get("description", "")
+                
+                # Event fallbacks
+                event_data = raw_data.get("event", {}) if isinstance(raw_data, dict) else {}
+                event_id = item.get("event_id") or event_data.get("id") or item_id
+                event_title = item.get("event_title") or event_data.get("title") or item.get("title")
+                news_reason = item.get("news_reason") or raw_data.get("decision_trace", {}).get("tradeability_reasoning")
+                
+                # Filter by impact score (> 4.0)
+                if impact_score < 4.0:
                     skipped_count += 1
                     continue
                 
-                # Map analysis data
-                raw_data = item.get("analysis_data") or item.get("raw_analysis_data", {})
+                # Robust timestamp parsing
+                pub_keys = ["published", "published_at", "publishedAt", "timestamp", "pubDate", "date", "created_at"]
+                pub_at_ms = _parse_timestamp(item, pub_keys)
                 
-                # Convert ISO timestamp to milliseconds
-                import time
-                pub_at = item.get("published") or item.get("published_at")
-                pub_at_ms = int(time.time() * 1000) # Default to now
-                if pub_at:
-                    try:
-                        # Handle ISO format with offset
-                        dt = datetime.fromisoformat(pub_at.replace("Z", "+00:00"))
-                        pub_at_ms = int(dt.timestamp() * 1000)
-                    except Exception:
-                        pass
+                # If it's analyzed, maybe there's a better timestamp in analysis_data
+                if not pub_at_ms or pub_at_ms > int(time.time() * 1000): # If missing or in future
+                     pub_at_ms = _parse_timestamp(raw_data, ["analysis_timestamp_utc", "timestamp"]) or pub_at_ms
                 
-                # Convert analyzed_at if present
-                ana_at = item.get("analyzed_at")
-                ana_at_ms = None
-                if ana_at:
-                    try:
-                        dt = datetime.fromisoformat(ana_at.replace("Z", "+00:00"))
-                        ana_at_ms = int(dt.timestamp() * 1000)
-                    except Exception:
-                        ana_at_ms = None
+                # Parse analysis time
+                ana_at_ms = _parse_timestamp(item, ["analyzed_at", "analyzedAt", "analyzed"], default_now=False)
+                if not ana_at_ms:
+                    ana_at_ms = _parse_timestamp(raw_data, ["analysis_timestamp_utc"])
 
                 # Extract affected symbols from dict if needed
                 affected = item.get("affected_symbols", [])
@@ -175,15 +261,67 @@ def fetch_news(db: Session = Depends(get_db)):
                         image_url=item.get("image_url"),
                         impact_score=impact_score,
                         impact_summary=item.get("impact_summary", ""),
-                        executive_summary=item.get("executive_summary", ""),
+                        executive_summary=exec_summary,
                         news_category=item.get("news_category", ""),
                         news_relevance=item.get("news_relevance", ""),
                         affected_symbols=affected,
                         raw_analysis_data=raw_data,
-                        processing_status=item.get("processing_status", "analyzed" if item.get("analyzed") else "pending")
+                        processing_status=item.get("processing_status", "analyzed" if item.get("analyzed") else "pending"),
+                        link=item.get("link"),
+                        market_bias=market_bias,
+                        signal_bucket=item.get("signal_bucket"),
+                        primary_symbol=item.get("primary_symbol"),
+                        affected_sectors=item.get("affected_sectors", []),
+                        affected_stocks=item.get("affected_stocks"),
+                        raw_full_data=item,
+                        news_impact_level=item.get("news_impact_level"),
+                        news_reason=news_reason,
+                        event_id=event_id,
+                        event_title=event_title,
+                        confidence=confidence,
+                        horizon=horizon
                     )
                     db.add(new_article)
                     saved_count += 1
+                else:
+                    # Force update if basic data changed OR if new intelligence fields are missing (backfill)
+                    needs_update = (
+                        existing.published_at != pub_at_ms or 
+                        not existing.raw_full_data or 
+                        existing.news_reason is None or 
+                        existing.horizon is None
+                    )
+                    
+                    if needs_update:
+                        if i == 0:
+                            print(f"DEBUG: Updating existing article {existing.id}. New Bias: {market_bias}, Reason: {news_reason}")
+                        
+                        existing.published_at = pub_at_ms
+                        existing.analyzed_at = ana_at_ms or existing.analyzed_at
+                        existing.link = item.get("link") or existing.link
+                        
+                        # Use explicit 'is not None' to handle 0 or empty strings
+                        if market_bias is not None: existing.market_bias = market_bias
+                        if item.get("signal_bucket") is not None: existing.signal_bucket = item.get("signal_bucket")
+                        if item.get("primary_symbol") is not None: existing.primary_symbol = item.get("primary_symbol")
+                        if item.get("affected_sectors") is not None: existing.affected_sectors = item.get("affected_sectors")
+                        if item.get("affected_stocks") is not None: existing.affected_stocks = item.get("affected_stocks")
+                        
+                        if item.get("news_impact_level") is not None: existing.news_impact_level = item.get("news_impact_level")
+                        if news_reason is not None: existing.news_reason = news_reason
+                        if event_id is not None: existing.event_id = event_id
+                        if event_title is not None: existing.event_title = event_title
+                        if confidence is not None: existing.confidence = confidence
+                        if horizon is not None: existing.horizon = horizon
+                        if impact_score is not None: existing.impact_score = impact_score
+                        if exec_summary is not None: existing.executive_summary = exec_summary
+                        
+                        existing.raw_full_data = item
+                        
+                        # Also update status if it changed
+                        new_status = item.get("processing_status")
+                        if new_status:
+                            existing.processing_status = new_status
             
             db.commit()
             print(f"DEBUG: Live fetch. Processed {len(articles_list)} items. Saved {saved_count} new articles.")

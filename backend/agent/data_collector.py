@@ -42,7 +42,7 @@ def fetch_recent_news(db: Session, hours_back: float = None) -> dict[str, list[d
     articles = (
         db.query(db_models.NewsArticle)
         .filter(db_models.NewsArticle.published_at >= cutoff_ms)
-        .filter(db_models.NewsArticle.impact_score >= 5.0)
+        .filter(db_models.NewsArticle.impact_score >= 4.0)
         .order_by(db_models.NewsArticle.published_at.desc())
         .all()
     )
@@ -179,7 +179,7 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
         skipped_existing = 0
         skipped_invalid = 0
 
-        for item in articles_list:
+        for i, item in enumerate(articles_list):
             if not isinstance(item, dict):
                 skipped_invalid += 1
                 continue
@@ -195,17 +195,34 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
                 .filter(db_models.NewsArticle.id == item_id)
                 .first()
             )
-            if existing:
-                skipped_existing += 1
-                continue
-
-            # Parse impact score and strictly filter out low-impact news
-            raw_impact = item.get("impact_score")
-            impact = float(raw_impact) if raw_impact is not None else 0.0
             
-            if impact < 5.0:
+            # Map analysis data
+            raw_data = item.get("analysis_data") or item.get("raw_analysis_data", {})
+            core_view = raw_data.get("core_view", {}) if isinstance(raw_data, dict) else {}
+            
+            # Intelligence Fallbacks (if top-level is null, check analysis_data.core_view)
+            impact = float(item.get("impact_score") if item.get("impact_score") is not None else core_view.get("impact_score", 0))
+            market_bias = item.get("market_bias") or core_view.get("market_bias")
+            confidence = item.get("confidence") if item.get("confidence") is not None else core_view.get("confidence", 0)
+            horizon = item.get("horizon") or core_view.get("horizon")
+            exec_summary = item.get("executive_summary") or raw_data.get("executive_summary") or item.get("description", "")
+            
+            # Event fallbacks
+            event_data = raw_data.get("event", {}) if isinstance(raw_data, dict) else {}
+            event_id = item.get("event_id") or event_data.get("id") or item_id
+            event_title = item.get("event_title") or event_data.get("title") or item.get("title", "No Title")
+            news_reason = item.get("news_reason") or raw_data.get("decision_trace", {}).get("tradeability_reasoning")
+            # Filter by impact score (> 4.0)
+            if impact < 4.0:
+                # Debug: log if we are skipping something the user might expect
+                if i < 10: # Only first 10 to avoid spam
+                    print(f"  [DEBUG] Article {item_id} filtered out (Impact: {impact})")
                 skipped_invalid += 1
                 continue
+
+            # Timestamps
+            pub_at_ms = _parse_ms(item.get("published_at") or item.get("published") or item.get("timestamp"))
+            ana_at_ms = _parse_ms(item.get("analyzed_at") or raw_data.get("analysis_timestamp_utc"))
 
             raw_stocks = item.get("affected_stocks", [])
             symbols_list = []
@@ -219,27 +236,64 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
             if not isinstance(final_symbols, list):
                 final_symbols = []
 
-            new_art = db_models.NewsArticle(
-                id=item_id,
-                title=item.get("title", "No Title"),
-                description=item.get("description", ""),
-                source=item.get("source", "Unknown"),
-                published_at=_parse_ms(item.get("published_at")),
-                analyzed_at=_parse_ms(item.get("analyzed_at")),
-                impact_score=impact,
-                impact_summary=item.get("impact_summary", ""),
-                executive_summary=item.get("executive_summary", ""),
-                news_category=item.get("news_category", ""),
-                news_relevance=item.get("news_relevance", ""),
-                affected_symbols=final_symbols,
-                raw_analysis_data=item.get("raw_analysis_data", {}),
-                processing_status=item.get("processing_status", "analyzed"),
-            )
-            db.add(new_art)
-            saved += 1
+            if not existing:
+                new_art = db_models.NewsArticle(
+                    id=item_id,
+                    title=item.get("title", "No Title"),
+                    description=item.get("description", ""),
+                    source=item.get("source", "Unknown"),
+                    published_at=pub_at_ms,
+                    analyzed_at=ana_at_ms,
+                    impact_score=impact,
+                    impact_summary=item.get("impact_summary", ""),
+                    executive_summary=exec_summary,
+                    news_category=item.get("news_category", ""),
+                    news_relevance=item.get("news_relevance", ""),
+                    affected_symbols=final_symbols,
+                    raw_analysis_data=raw_data,
+                    processing_status=item.get("processing_status", "analyzed"),
+                    link=item.get("link"),
+                    market_bias=market_bias,
+                    signal_bucket=item.get("signal_bucket"),
+                    primary_symbol=item.get("primary_symbol"),
+                    affected_sectors=item.get("affected_sectors", []),
+                    affected_stocks=item.get("affected_stocks"),
+                    raw_full_data=item,
+                    news_impact_level=item.get("news_impact_level"),
+                    news_reason=news_reason,
+                    event_id=event_id,
+                    event_title=event_title,
+                    confidence=confidence,
+                    horizon=horizon
+                )
+                db.add(new_art)
+                saved += 1
+            else:
+                # Force backfill for existing articles if intelligence is missing or impact score was 0
+                needs_update = (
+                    not existing.news_reason or 
+                    not existing.horizon or 
+                    (existing.impact_score or 0) < 4 or
+                    not existing.raw_full_data
+                )
+                if needs_update:
+                    print(f"  [DEBUG] Backfilling data for existing article {item_id} (Impact: {impact})")
+                    existing.news_reason = news_reason or existing.news_reason
+                    existing.event_id = event_id or existing.event_id
+                    existing.event_title = event_title or existing.event_title
+                    existing.confidence = confidence if confidence is not None else existing.confidence
+                    existing.horizon = horizon or existing.horizon
+                    existing.market_bias = market_bias or existing.market_bias
+                    existing.impact_score = impact if impact is not None else existing.impact_score
+                    existing.executive_summary = exec_summary or existing.executive_summary
+                    existing.raw_full_data = item
+                    existing.raw_analysis_data = raw_data
+                    skipped_existing += 1
+                else:
+                    skipped_existing += 1
 
         db.commit()
-        print(f"  [FETCH] Result: {saved} new | {skipped_existing} already exist | {skipped_invalid} invalid")
+        print(f"  [FETCH] Result: {saved} new | {skipped_existing} updated/skipped | {skipped_invalid} invalid")
         return saved
 
     except httpx.ConnectError as e:

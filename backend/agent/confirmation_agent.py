@@ -2,31 +2,23 @@
 
 Runs at 9:20 AM IST (5 minutes after NSE market open).
 Takes Agent 1's Discovery assessments (pending_confirmation) and validates
-them against LIVE market-open data.
+them against LIVE market-open data using the Market Reality Validator.
 
 Pipeline:
   1. Query DB for today's signals where confirmation_status = 'pending'
   2. For each WATCH signal:
      a. Fetch LIVE stock data (current price, volume, open, high/low)
-     b. Build Agent 2 input: discovery output + live context
-     c. Send to Gemini for edge confirmation
+     b. Build Agent 2 input: agent_1_view + market_data + technical_context
+     c. Send to Market Reality Validator (Gemini or fallback)
      d. Update signal: confirmation_status, confirmation_data
-  3. Return summary of all confirmations
+  3. Return summary of all validations
 
-Input Contract (what this agent feeds to gemini_confirmer.confirm_signal_v2):
-  {
-    symbol, company_name,
-    news_bundle: [...],          # article title/desc/published_at snippets
-    bundle_meta: {...},          # article_count, distinct_event_count, timing
-    discovery: {...},            # FULL Agent 1 Discovery output (new schema)
-    live_market_context: {...}   # gap, change, move_quality, volume, etc.
-  }
-
-The `discovery` block is the new Agent 1 schema — NOT the old watchlist fields.
+Agent 2 does NOT generate trades — it only validates and filters.
 """
 
 import time
 import uuid
+import logging
 from datetime import datetime, timezone, timedelta
 from sqlalchemy.orm import Session
 
@@ -35,6 +27,7 @@ from database import SessionLocal
 from agent.data_collector import fetch_stock_data_for_symbols
 from agent.gemini_confirmer import confirm_signal_v2
 
+logger = logging.getLogger(__name__)
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
@@ -47,13 +40,143 @@ def _now_ms() -> int:
     return int(time.time() * 1000)
 
 
+def _build_agent2_input(sig, live_data: dict, discovery_output: dict, snapshot: dict) -> dict:
+    """
+    Build the standardised Agent 2 input contract from DB signal + live data.
+
+    Returns the new-schema input:
+    {
+      stock: { symbol, company_name, exchange },
+      agent_1_view: { final_bias, final_confidence, combined_trading_thesis, ... },
+      market_data: { previous_close, open_price, ltp, ..., technical_context: {...} }
+    }
+    """
+    symbol = sig.symbol
+
+    # Extract Agent 1 combined_view
+    cv = discovery_output.get("combined_view", {})
+    reasoning = cv.get("reasoning", {})
+
+    agent_1_view = {
+        "final_bias": cv.get("final_bias", "NEUTRAL"),
+        "final_confidence": cv.get("final_confidence", "LOW"),
+        "executive_summary": cv.get("executive_summary", ""),
+        "why_this_stock_is_important_today": cv.get("why_this_stock_is_important_today", ""),
+        "combined_trading_thesis": cv.get("combined_trading_thesis", ""),
+        "combined_invalidation": cv.get("combined_invalidation", ""),
+        "key_risks": cv.get("key_risks", []),
+        "reasoning": {
+            "why_agent_gave_this_view": reasoning.get("why_agent_gave_this_view", ""),
+            "main_driver": reasoning.get("main_driver", ""),
+            "supporting_points": reasoning.get("supporting_points", []),
+            "risk_points": reasoning.get("risk_points", []),
+            "confidence_reason": reasoning.get("confidence_reason", ""),
+            "what_agent_2_should_validate": reasoning.get("what_agent_2_should_validate", []),
+        },
+    }
+
+    # Build market_data from live prices
+    prev_close = snapshot.get("last_close") or live_data.get("last_close") or 0
+    open_price = live_data.get("today_open", 0) or 0
+    ltp = live_data.get("ltp", open_price) or 0
+    day_high = live_data.get("today_high", 0) or 0
+    day_low = live_data.get("today_low", 0) or 0
+
+    gap_pct = round(((open_price - prev_close) / prev_close * 100), 2) if prev_close else 0.0
+
+    # Volume ratio
+    avg_vol = snapshot.get("avg_volume_20d") or 0
+    current_vol = live_data.get("current_volume", 0) or 0
+    volume_ratio = round(current_vol / avg_vol, 2) if avg_vol and avg_vol > 0 else 0.0
+
+    # Time since open (approx)
+    now = datetime.now(IST)
+    market_open_time = now.replace(hour=9, minute=15, second=0, microsecond=0)
+    time_since_open = max(0, round((now - market_open_time).total_seconds() / 60, 1))
+
+    # Build technical_context from snapshot if available
+    # This is a placeholder — in production, these come from a levels service
+    technical_context = _build_technical_context(ltp, prev_close, day_high, day_low, snapshot)
+
+    market_data = {
+        "previous_close": prev_close,
+        "open_price": open_price,
+        "ltp": ltp,
+        "day_high": day_high,
+        "day_low": day_low,
+        "gap_percent": gap_pct,
+        "volume_ratio": volume_ratio,
+        "time_since_open_minutes": time_since_open,
+        "technical_context": technical_context,
+    }
+
+    return {
+        "stock": {
+            "symbol": symbol,
+            "company_name": live_data.get("company_name", symbol),
+            "exchange": "NSE",
+        },
+        "agent_1_view": agent_1_view,
+        "market_data": market_data,
+    }
+
+
+def _build_technical_context(
+    ltp: float, prev_close: float, day_high: float, day_low: float,
+    snapshot: dict,
+) -> dict:
+    """
+    Build technical_context for support/resistance validation.
+
+    Uses snapshot data if available, otherwise derives basic levels
+    from prev_close and day range as approximations.
+    """
+    # Try to use pre-computed levels from snapshot
+    support = snapshot.get("nearest_support") or snapshot.get("support_level")
+    resistance = snapshot.get("nearest_resistance") or snapshot.get("resistance_level")
+
+    # Fallback: derive approximate levels from available data
+    if not support and prev_close:
+        # Use previous close as a rough support for a gap-up scenario
+        # or day_low if available
+        support = day_low if day_low and day_low > 0 else prev_close * 0.985
+
+    if not resistance and prev_close:
+        resistance = day_high if day_high and day_high > 0 else prev_close * 1.015
+
+    support = float(support) if support else 0
+    resistance = float(resistance) if resistance else 0
+
+    if ltp and support and support > 0:
+        sup_dist_pct = round(abs(ltp - support) / ltp * 100, 2)
+        price_above_support = ltp > support
+    else:
+        sup_dist_pct = 99.0
+        price_above_support = True
+
+    if ltp and resistance and resistance > 0:
+        res_dist_pct = round(abs(resistance - ltp) / ltp * 100, 2)
+        price_below_resistance = ltp < resistance
+    else:
+        res_dist_pct = 99.0
+        price_below_resistance = True
+
+    return {
+        "nearest_support": round(support, 2) if support else None,
+        "nearest_resistance": round(resistance, 2) if resistance else None,
+        "support_distance_percent": sup_dist_pct,
+        "resistance_distance_percent": res_dist_pct,
+        "price_above_support": price_above_support,
+        "price_below_resistance": price_below_resistance,
+    }
+
+
 def run_market_open_confirmation(db: Session = None) -> dict:
     """
     Execute the Market Open Confirmation pipeline (Agent 2).
 
     Fetches all pending_confirmation signals for today, builds the correct
-    Agent 2 input from the new Discovery schema, gets live market data,
-    and uses Gemini to confirm or reject each one.
+    Agent 2 input, gets live market data, and validates each thesis.
     """
     own_session = False
     if db is None:
@@ -65,29 +188,29 @@ def run_market_open_confirmation(db: Session = None) -> dict:
         run_id = f"confirm-{market_date}-{uuid.uuid4().hex[:8]}"
         started_at = _now_ms()
 
-        print(f"\n{'='*60}")
-        print(f"[AGENT 2] MARKET OPEN CONFIRMATION -- Run ID: {run_id}")
-        print(f"   Market Date: {market_date}")
-        print(f"   Time: {datetime.now(IST).strftime('%H:%M:%S IST')}")
-        print(f"{'='*60}")
+        logger.info("=" * 60)
+        logger.info("[AGENT 2] MARKET REALITY VALIDATOR -- Run ID: %s", run_id)
+        logger.info("   Market Date: %s", market_date)
+        logger.info("   Time: %s", datetime.now(IST).strftime("%H:%M:%S IST"))
+        logger.info("=" * 60)
 
         # -- Step 1: Get today's pending signals ----------------------------
         pending_signals = (
             db.query(db_models.DBTradeSignal)
             .filter(db_models.DBTradeSignal.market_date == market_date)
             .filter(db_models.DBTradeSignal.confirmation_status == "pending")
-            .order_by(db_models.DBTradeSignal.symbol) # Sort to prevent deadlocks
+            .order_by(db_models.DBTradeSignal.symbol)
             .all()
         )
 
         if not pending_signals:
-            print("\n[WARN] No pending signals found for today.")
+            logger.warning("[AGENT 2] No pending signals found for today.")
             return {
                 "run_id": run_id,
                 "market_date": market_date,
                 "confirmed_at": _now_ms(),
                 "total_checked": 0,
-                "summary": {"confirmed": 0, "revised": 0, "invalidated": 0, "skipped": 0},
+                "summary": {"confirmed": 0, "weakened": 0, "invalidated": 0, "skipped": 0},
                 "results": [],
                 "duration_ms": 0,
             }
@@ -98,31 +221,27 @@ def run_market_open_confirmation(db: Session = None) -> dict:
 
         # Auto-skip non-tradable signals
         results = []
-        summary = {"confirmed": 0, "revised": 0, "invalidated": 0, "skipped": 0}
-        
+        summary = {"confirmed": 0, "weakened": 0, "invalidated": 0, "skipped": 0}
+
         for sig in skip_signals:
             sig.confirmation_status = "invalidated"
             sig.confirmed_at = _now_ms()
             sig.status = "invalidated"
             sig.confirmation_data = {
-                "decision": "NO TRADE",
-                "why_tradable_or_not": (
-                    f"Auto-skipped: Discovery verdict was not IMPORTANT_EVENT "
-                    f"(signal_type={sig.signal_type})"
-                ),
+                "validation": {"status": "INVALIDATED", "reason": f"Auto-skipped: signal_type={sig.signal_type}"},
+                "decision": {"should_pass_to_agent_3": False, "agent_3_instruction": "DO_NOT_PROCEED"},
                 "_source": "auto_skip",
             }
             results.append({
                 "symbol": sig.symbol,
-                "decision": "SKIPPED",
-                "confidence": sig.confidence,
-                "why": f"Auto-skipped: Discovery verdict was {sig.signal_type}",
+                "status": "SKIPPED",
+                "reason": f"Auto-skipped: signal_type={sig.signal_type}",
             })
             summary["skipped"] += 1
             db.commit()
 
         if not tradable_signals:
-            print("\n[INFO] No WATCH signals found to confirm. (Skipped non-important events)")
+            logger.info("[AGENT 2] No WATCH signals found to validate.")
             return {
                 "run_id": run_id,
                 "market_date": market_date,
@@ -137,132 +256,68 @@ def run_market_open_confirmation(db: Session = None) -> dict:
         symbols = list(set(s.symbol for s in tradable_signals))
         live_data_map = fetch_stock_data_for_symbols(symbols)
 
-        # Guard: if ALL symbols failed to fetch, this is a total network outage.
-        # Do NOT invalidate signals — keep them pending so they can be retried.
+        # Guard: total network outage
         if len(symbols) > 0 and len(live_data_map) == 0:
-            print(
-                f"\n[WARN] Agent 2 ABORTED: Live data fetch returned 0 of {len(symbols)} symbols."
-                f"\n       This indicates a network outage (DNS failure, proxy block, or API down)."
-                f"\n       All {len(tradable_signals)} signal(s) remain PENDING for retry."
+            logger.warning(
+                "[AGENT 2] ABORTED: Live data fetch returned 0 of %d symbols. "
+                "All signals remain PENDING for retry.", len(symbols)
             )
             return {
                 "run_id": run_id,
                 "market_date": market_date,
                 "confirmed_at": _now_ms(),
                 "total_checked": 0,
-                "summary": {"confirmed": 0, "revised": 0, "invalidated": 0, "skipped": 0},
+                "summary": summary,
                 "results": [],
                 "error": "network_outage",
-                "error_detail": f"All {len(symbols)} live data fetches failed. Signals left as pending.",
+                "error_detail": f"All {len(symbols)} live data fetches failed.",
                 "duration_ms": _now_ms() - started_at,
             }
 
-        # -- Step 3: Process each signal (CONCURRENT) -----------------------
-        print(f"\n[STEP 3] Running Gemini Confirmation analysis ({len(tradable_signals)} signals, concurrent)...")
+        # -- Step 3: Build inputs and run validation ------------------------
+        logger.info("[AGENT 2] Validating %d signals...", len(tradable_signals))
 
-
-        # Pre-build inputs for all signals to avoid passing DB objects to threads
         tasks = []
         for sig in tradable_signals:
             live_data = live_data_map.get(sig.symbol)
             if not live_data:
-                # Isolated fetch failure
                 sig.confirmation_status = "invalidated"
                 sig.confirmed_at = _now_ms()
                 sig.status = "invalidated"
                 sig.confirmation_data = {
-                    "decision": "NO TRADE",
-                    "why_tradable_or_not": "Live data unavailable for this symbol specifically — cannot validate edge.",
+                    "validation": {"status": "INVALIDATED", "reason": "Live data unavailable"},
+                    "decision": {"should_pass_to_agent_3": False, "agent_3_instruction": "DO_NOT_PROCEED"},
                     "_source": "no_data_skip",
                 }
                 summary["skipped"] += 1
-                print(f"      [SKIP] {sig.symbol}: No live data — isolated fetch failure")
+                logger.warning("   [SKIP] %s: No live data — isolated fetch failure", sig.symbol)
                 continue
-
-            # Fetch News Bundle
-            article_ids = sig.news_article_ids if isinstance(sig.news_article_ids, list) else []
-            articles = db.query(db_models.NewsArticle).filter(db_models.NewsArticle.id.in_(article_ids)).all()
-            news_bundle = []
-            for a in articles:
-                news_bundle.append({
-                    "title": a.title,
-                    "description": a.description or a.executive_summary or "",
-                    "published_at": datetime.fromtimestamp(a.published_at / 1000, IST).isoformat() if a.published_at else "",
-                })
-
-            times = [a.published_at for a in articles if a.published_at]
-            distinct_event_count = len(set(a.impact_summary for a in articles if a.impact_summary))
-            bundle_meta = {
-                "article_count": len(articles),
-                "distinct_event_count": distinct_event_count,
-                "has_multiple_catalysts": distinct_event_count > 1,
-                "latest_article_time": datetime.fromtimestamp(max(times) / 1000, IST).isoformat() if times else "",
-                "earliest_article_time": datetime.fromtimestamp(min(times) / 1000, IST).isoformat() if times else "",
-            }
 
             discovery_output = sig.reasoning if isinstance(sig.reasoning, dict) else {}
             snapshot = sig.stock_snapshot if isinstance(sig.stock_snapshot, dict) else {}
-            prev_close = snapshot.get("last_close") or live_data.get("last_close") or 0
-            open_price = live_data.get("today_open", 0)
-            gap_pct = round(((open_price - prev_close) / prev_close * 100), 2) if prev_close else 0
-            change_pct = round(live_data.get("current_change_pct") or 0, 2)
-            ltp = live_data.get("ltp", open_price)
 
-            move_quality = "WEAK"
-            if open_price and prev_close:
-                if gap_pct > 0.3 and ltp < open_price * 0.995: move_quality = "REVERSING"
-                elif gap_pct < -0.3 and ltp > open_price * 1.005: move_quality = "REVERSING"
-                elif (gap_pct > 0.5 and change_pct < -0.3) or (gap_pct < -0.5 and change_pct > 0.3): move_quality = "FADING"
-                elif (gap_pct > 0 and change_pct > 0.2) or (gap_pct < 0 and change_pct < -0.2): move_quality = "STRONG"
-                elif abs(change_pct) <= 0.5: move_quality = "HOLDING"
-
-            live_market_context = {
-                "previous_close": prev_close,
-                "open": open_price,
-                "high": live_data.get("today_high", 0),
-                "low": live_data.get("today_low", 0),
-                "ltp": ltp,
-                "gap_percent": gap_pct,
-                "change_percent": change_pct,
-                "volume": live_data.get("current_volume", 0),
-                "opening_move_quality": move_quality,
-            }
-
-            avg_vol_20d = snapshot.get("avg_volume_20d")
-            current_vol = live_data.get("current_volume", 0)
-            if avg_vol_20d and avg_vol_20d > 0 and current_vol:
-                live_market_context["volume_vs_avg_20d"] = round(current_vol / avg_vol_20d, 2)
-
-            if prev_close and ltp:
-                live_market_context["price_move_percent"] = round((ltp - prev_close) / prev_close * 100, 2)
-
-            agent2_input = {
-                "symbol": sig.symbol,
-                "company_name": sig.symbol,
-                "news_bundle": news_bundle,
-                "bundle_meta": bundle_meta,
-                "discovery": discovery_output,
-                "live_market_context": live_market_context,
-            }
+            agent2_input = _build_agent2_input(sig, live_data, discovery_output, snapshot)
             tasks.append((sig, agent2_input, discovery_output))
 
-        db.commit() # Save any skipped signals early
+        db.commit()
 
         # Run Gemini calls concurrently
         from concurrent.futures import ThreadPoolExecutor, as_completed
-        def _confirm_one(symbol, inp):
-            print(f"      [GEMINI] Agent 2 confirming {symbol}...")
+
+        def _validate_one(symbol, inp):
+            logger.info("   [GEMINI] Agent 2 validating %s...", symbol)
             try:
                 res = confirm_signal_v2(inp, market_date)
-                print(f"      [OK] {symbol}: {res.get('decision', 'NO TRADE')} (conf={res.get('confidence')})")
+                status = res.get("validation", {}).get("status", "WEAKENED")
+                logger.info("   [OK] %s: status=%s", symbol, status)
                 return symbol, res
             except Exception as e:
-                print(f"      [ERROR] {symbol}: {e}")
+                logger.error("   [ERROR] %s: %s", symbol, e)
                 return symbol, None
 
         results_map = {}
         with ThreadPoolExecutor(max_workers=5) as pool:
-            futures = {pool.submit(_confirm_one, t[0].symbol, t[1]): t[0].symbol for t in tasks}
+            futures = {pool.submit(_validate_one, t[0].symbol, t[1]): t[0].symbol for t in tasks}
             for future in as_completed(futures):
                 sym = futures[future]
                 try:
@@ -270,7 +325,7 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                     if result is not None:
                         results_map[s] = result
                 except Exception as e:
-                    print(f"   [ERROR] Thread for {sym} failed: {e}")
+                    logger.error("   [ERROR] Thread for %s failed: %s", sym, e)
 
         # Write results to DB sequentially
         for sig, _, discovery_output in tasks:
@@ -278,63 +333,81 @@ def run_market_open_confirmation(db: Session = None) -> dict:
             if not confirmation:
                 continue
 
-            decision = confirmation.get("decision", "NO TRADE").upper()
-            is_trade = (decision == "TRADE")
-            
-            sig.confirmation_status = "confirmed" if is_trade else "invalidated"
+            val = confirmation.get("validation", {})
+            dec = confirmation.get("decision", {})
+            status = val.get("status", "WEAKENED")
+            should_pass = dec.get("should_pass_to_agent_3", False)
+
+            # Map new status to DB confirmation_status
+            if status == "CONFIRMED" and should_pass:
+                sig.confirmation_status = "confirmed"
+                sig.status = "confirmed"
+                summary["confirmed"] += 1
+            elif status == "INVALIDATED":
+                sig.confirmation_status = "invalidated"
+                sig.status = "invalidated"
+                summary["invalidated"] += 1
+            else:
+                sig.confirmation_status = "invalidated"  # WEAKENED = not passed
+                sig.status = "invalidated"
+                summary["weakened"] += 1
+
             sig.confirmed_at = _now_ms()
             sig.confirmation_data = confirmation
-            sig.status = "confirmed" if is_trade else "invalidated"
-            sig.trade_mode = confirmation.get("trade_mode", "NONE")
-            sig.confidence = confirmation.get("confidence", discovery_output.get("confidence", 0))
 
-            # --- LOGGING: [AGENT 2 OUTPUT] ---
-            print(f"\n==============================")
-            print(f"[AGENT 2 OUTPUT]")
-            print(f"==============================")
-            print(f"symbol: {sig.symbol}")
-            print(f"decision: {decision}")
-            print(f"direction: {confirmation.get('direction', 'NEUTRAL')}")
-            print(f"trade_mode: {sig.trade_mode}")
-            print(f"confidence: {sig.confidence}")
+            # Confidence: use Agent 1's confidence mapped to int
+            cv = discovery_output.get("combined_view", {})
+            conf_map = {"LOW": 20, "MEDIUM": 55, "HIGH": 80}
+            sig.confidence = conf_map.get(cv.get("final_confidence", ""), 20)
+
+            # --- LOGGING ---
+            logger.info("=" * 40)
+            logger.info("[AGENT 2 OUTPUT] %s", sig.symbol)
+            logger.info("   status: %s", status)
+            logger.info("   alignment: %s", confirmation.get("thesis_check", {}).get("alignment", "?"))
+            logger.info("   behavior: %s", confirmation.get("market_behavior", {}).get("price_behavior", "?"))
+            logger.info("   should_pass: %s", should_pass)
+            logger.info("   instruction: %s", dec.get("agent_3_instruction", "?"))
+            logger.info("   reason: %s", val.get("reason", ""))
             
-            indicators = confirmation.get("requested_indicators", [])
-            if indicators:
-                print(f"requested_indicators:")
-                for ind in indicators:
-                    print(f"  - {ind.get('name')} ({ind.get('timeframe')})")
-            else:
-                print(f"requested_indicators: NONE (NO TRADE or fallback)")
-            print(f"==============================\n")
+            ts = confirmation.get("trade_suitability", {})
+            logger.info("   [SUITABILITY] mode=%s | holding_logic=%s", 
+                        ts.get("mode", "?"), ts.get("holding_logic", "?"))
+            
+            inds = confirmation.get("indicators_to_check", {})
+            logger.info("   [INDICATORS] trend=%s | momentum=%s | volatility=%s | volume=%s | patterns=%s | sr=%s",
+                        len(inds.get("trend", [])), len(inds.get("momentum", [])), 
+                        len(inds.get("volatility", [])), len(inds.get("volume", [])),
+                        len(inds.get("pattern_recognition", [])), len(inds.get("support_resistance", [])))
+            logger.info("=" * 40)
 
-            summary["confirmed" if is_trade else "invalidated"] += 1
             results.append({
                 "symbol": sig.symbol,
-                "decision": decision,
-                "confidence": sig.confidence,
-                "why": confirmation.get("why_tradable_or_not", ""),
+                "status": status,
+                "alignment": confirmation.get("thesis_check", {}).get("alignment", "?"),
+                "should_pass": should_pass,
+                "reason": val.get("reason", ""),
             })
             db.commit()
 
+            # Trigger Agent 2.5 immediately if CONFIRMED and should_pass
+            if status == "CONFIRMED" and should_pass and dec.get("agent_3_instruction") != "DO_NOT_PROCEED":
+                logger.info("[TRIGGER] Agent 2 confirmed %s → Agent 2.5 starting", sig.symbol)
+                try:
+                    from agent.technical_analysis_agent import run_technical_analysis
+                    run_technical_analysis(db=db, signal_ids=[sig.id])
+                except Exception as e:
+                    logger.error("[ERROR] Triggering Agent 2.5 failed for %s: %s", sig.symbol, e)
+
         duration = _now_ms() - started_at
 
-        print(f"\n{'='*60}")
-        print(f"[DONE] Agent 2 Pipeline Complete")
-        print(f"   Duration: {duration}ms")
-        print(f"{'='*60}\n")
-
-        # -- Step 4: Auto-trigger Agent 3 (Execution Planner) if signals confirmed --
-        agent3_result = None
-        if summary["confirmed"] > 0:
-            try:
-                print(f"\n[AUTO] {summary['confirmed']} signals confirmed. Triggering Agent 3 (Execution Planner)...")
-                from agent.execution_agent import run_execution_planner
-                agent3_result = run_execution_planner(db)
-            except Exception as e:
-                print(f"\n[ERROR] Auto-triggering Agent 3 failed: {e}")
-                import traceback
-                traceback.print_exc()
-                agent3_result = {"status": "error", "message": str(e)}
+        logger.info("=" * 60)
+        logger.info("[DONE] Agent 2 Market Reality Validator Complete")
+        logger.info("   Confirmed: %d | Weakened: %d | Invalidated: %d | Skipped: %d",
+                     summary["confirmed"], summary["weakened"],
+                     summary["invalidated"], summary["skipped"])
+        logger.info("   Duration: %dms", duration)
+        logger.info("=" * 60)
 
         return {
             "run_id": run_id,
@@ -343,7 +416,7 @@ def run_market_open_confirmation(db: Session = None) -> dict:
             "total_checked": len(tradable_signals),
             "summary": summary,
             "results": results,
-            "agent3_execution": agent3_result,
+            "agent25_execution": None,
             "duration_ms": duration,
         }
 
