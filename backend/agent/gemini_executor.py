@@ -80,53 +80,132 @@ Do not round up. Do not approximate. Do not invent alternate formulas.
 === INPUT DATA ===
 {input_json}
 
-=== DECISION PRIORITY (MANDATORY ORDER) ===
+=== TASK ===
 
-You MUST evaluate in this exact order. Stop at the first failing gate.
+STEP 0 — MARKET DATA VALIDITY
+Use only the latest live_execution_context provided in this request.
+Do not rely on earlier agent price context.
+If market_status, market_snapshot_time, snapshot_id, or price fields are missing or inconsistent, output NO TRADE.
+If market is CLOSED, interpret structure using the latest official closing snapshot only.
 
-STEP 1 -- AGENT 2 GATE
-Read agent2_view:
-- If decision.should_pass_to_agent_3 is false -> AVOID
-- If validation.status is not CONFIRMED -> AVOID
-- If decision.agent_3_instruction = DO_NOT_PROCEED -> AVOID
-Do NOT reinterpret. Do NOT rescue a rejected trade.
+STEP 1 — AGENT 2 HARD GATE
+Read Agent 2 output first:
+- decision
+- direction
+- trade_mode
+- remaining_impact
+- priced_in_status
+- priority
+- warning_flags
+- invalid_if
+- why_tradable_or_not
 
-STEP 2 -- AGENT 2.5 GATE (if agent25_technical_analysis exists)
-Read agent25_technical_analysis.technical_analysis:
-- If agent_3_handoff.technical_go_no_go = NO_GO -> AVOID
-- If agent_3_handoff.technical_go_no_go = WAIT -> WAIT_FOR_PULLBACK or WAIT_FOR_BREAKOUT
-- If overall.trade_readiness = AVOID -> AVOID
-- If overall.execution_support = NO_SUPPORT -> AVOID
-Do NOT redo technical analysis. Accept Agent 2.5 conclusions as given.
+Rules:
+- If Agent 2 decision = NO TRADE, your output MUST be NO TRADE.
+- If any invalid_if condition is already clearly active in current structure, your output MUST be NO TRADE.
+- Do not reinterpret a rejected setup as conditional.
+- Do not rescue a dead trade.
 
-STEP 3 -- BIAS ALIGNMENT
-Compare:
-- Agent 1 final_bias (from agent2_view.agent_1_view)
-- Agent 2.5 overall.technical_bias (if available)
-If direct contradiction (BULLISH vs BEARISH with strong confidence) -> AVOID
-If weak contradiction -> WAIT_FOR_PULLBACK
+STEP 1.5 — TECHNICAL INDICATORS (EXECUTION SUPPORT ONLY)
+If technical_context is provided in the input, review it as supplementary execution intelligence:
+- indicator_values: TA-Lib computed values requested by Agent 2 (RSI, EMA, ATR, MACD, etc.)
+- technical_warnings: automated flags from indicator interpretation
+- technical_confirmations: automated confirmations from indicator interpretation
 
-STEP 4 -- ENTRY FEASIBILITY
-Using live_execution_context, evaluate current price location:
-- ltp, vwap, distance_from_vwap_percent
-- distance_from_day_high_percent, distance_from_day_low_percent
-- intraday_structure, opening_move_quality
+Use indicators ONLY to:
+- Confirm or flag exhaustion (e.g., RSI overbought = caution for long entry)
+- Confirm trend alignment (e.g., price above rising EMA = supportive)
+- Estimate volatility for stop placement (e.g., ATR expanding = wider stop needed)
+- Avoid chasing (e.g., RSI extreme + stretched price = AVOID CHASE)
 
-ENTER_NOW only when:
-- Location is clean (not stretched, not near exhaustion)
-- Structure supports immediate entry
-- Agent 2.5 technical_go_no_go = GO (or absent)
-- Agent 2.5 execution_support = STRONG_SUPPORT or MODERATE_SUPPORT
+Indicators must NOT:
+- Override Agent 2 decision (if Agent 2 = NO TRADE, indicators are irrelevant)
+- Override hard risk limits or RR validation
+- Create a trade on their own — they are supporting evidence only
+- Replace structural analysis of price location
 
-WAIT if:
-- Thesis alive but location stretched or structure needs confirmation
+STEP 1.6 — VISUAL CHART ANALYSIS (IF PROVIDED)
+If a technical chart image is attached to this request, analyze it visually. The image contains 4 specific subplots to help your execution decision:
+1. Chart 1 (Top): Price Action & Trend Indicators — Examine candlestick patterns (doji, engulfing, etc.), price structure (higher highs/lows, range, breakouts), and trend direction using moving average slopes (EMA/SMA) and price relationship to them. Check support/resistance zones visible from candle clustering.
+2. Chart 2: Momentum Indicator (MACD or RSI) — Look for momentum extremes (overbought/oversold), divergences between price and momentum, or MACD crossovers.
+3. Chart 3: Volatility Indicator (ATR) — Assess current volatility expansion or contraction to help determine optimal stop-loss width.
+4. Chart 4 (Bottom): Volume Indicator — Assess volume profile: is volume increasing on breakouts and declining on pullbacks?
 
-AVOID if:
-- Move largely done, structure broken, or edge absorbed
+Visual analysis MUST:
+- Complement (not replace) the numeric indicator_values already provided
+- Be used to detect patterns that numbers alone may miss (e.g., chart patterns, candle shapes)
+- Strengthen or weaken your confidence in the execution decision
 
-STEP 5 -- RISK GATE
-For ENTER_NOW proposals, verify ALL of these:
-1. stop_loss on correct side of entry_price
+Visual analysis must NOT:
+- Override Agent 2 decision or hard risk limits
+- Create a trade on its own
+- Be used if the chart is unclear, corrupted, or unreadable
+
+STEP 2 — PRICE LOCATION AND STRUCTURE
+Evaluate current execution context using:
+- ltp
+- vwap
+- distance_from_vwap_percent
+- distance_from_day_high_percent
+- distance_from_day_low_percent
+- intraday_structure
+- opening_move_quality
+
+Classify the current location mentally as one of:
+- CLEAN = not stretched, structure intact, entry location acceptable
+- STRETCHED = thesis still alive but current location is late or extended
+- EXHAUSTED = move largely done, close to day extreme, edge mostly absorbed
+- STRUCTURALLY POOR = broken structure, incoherent location, or bad invalidation placement
+
+Rules:
+- A valid thesis with STRETCHED or EXHAUSTED location must not become ENTER NOW.
+- If price is too far from VWAP or too close to exhaustion, prefer WAIT FOR PULLBACK or AVOID CHASE.
+- If structure is poor, prefer NO TRADE.
+
+STEP 3 — CHOOSE EXECUTION DECISION
+Choose exactly one:
+- ENTER NOW
+- WAIT FOR BREAKOUT
+- WAIT FOR PULLBACK
+- AVOID CHASE
+- NO TRADE
+
+Use them this way:
+- ENTER NOW only when immediately executable and still offers acceptable edge
+- WAIT FOR BREAKOUT when structure needs a clear break first
+- WAIT FOR PULLBACK when thesis is intact but current location is poor
+- AVOID CHASE when move is too extended and edge is mostly gone
+- NO TRADE when Agent 2 rejected it, invalidation is active, constraints fail, or execution is unsafe
+
+STEP 4 — DESIGN LEVELS
+Set:
+- entry
+- stop loss
+- target
+
+All three must be structurally justified.
+
+Entry rules:
+- Must match the execution decision
+- Must not sit inside obvious noise
+- Must not assume a price condition that has already passed
+
+Stop loss rules:
+- Must clearly invalidate the setup if hit
+- Must be on the correct side of entry
+- Must not be so tight that normal noise likely hits it immediately
+- Must not be so wide that sizing becomes impossible
+
+Target rules:
+- Must be realistic for the structure and move context
+- Must not be a random round number guess
+- Must not be so close that RR falls below minimum
+- Must not require perfect execution to be achievable
+
+STEP 5 — HARD RISK GATE
+For the proposed plan, verify all of these:
+
+1. stop is on the correct side of entry
 2. risk_per_share > 0
 3. quantity >= 1
 4. risk_amount <= max_loss_amount (Rs.{max_loss_amount})

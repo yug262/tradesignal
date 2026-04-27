@@ -20,6 +20,99 @@ from services.chart_generator import generate_technical_chart
 
 IST = timezone(timedelta(hours=5, minutes=30))
 
+# Comprehensive pool of default indicators based on user's requested categories
+# Comprehensive pool of default indicators based on user's requested categories
+ALL_DEFAULT_INDICATORS = {
+    "Trend": [
+        {"name": "SMA", "timeframe": "1m", "period": 20, "reason": "Simple Trend"},
+        {"name": "EMA", "timeframe": "1m", "period": 20, "reason": "Primary Trend Alignment"},
+        {"name": "WMA", "timeframe": "1m", "period": 20, "reason": "Weighted Trend"},
+        {"name": "DEMA", "timeframe": "1m", "period": 20, "reason": "Double EMA Trend"},
+        {"name": "TEMA", "timeframe": "1m", "period": 20, "reason": "Triple EMA Trend"},
+        {"name": "MACD", "timeframe": "1m", "period": 14, "reason": "Trend & Momentum Reversal"},
+        {"name": "ADX", "timeframe": "1m", "period": 14, "reason": "Trend Strength"},
+        {"name": "AROON", "timeframe": "1m", "period": 14, "reason": "Aroon Trend Identification"},
+        {"name": "SAR", "timeframe": "1m", "period": 0, "reason": "Parabolic SAR Reversal"},
+        {"name": "ICHIMOKU", "timeframe": "1m", "period": 0, "reason": "Ichimoku Cloud Trend"},
+    ],
+    "Momentum": [
+        {"name": "RSI", "timeframe": "1m", "period": 14, "reason": "Momentum & Exhaustion (Overbought/Oversold)"},
+        {"name": "STOCH", "timeframe": "1m", "period": 14, "reason": "Stochastic Oscillator"},
+        {"name": "CCI", "timeframe": "1m", "period": 14, "reason": "Commodity Channel Index"},
+        {"name": "ROC", "timeframe": "1m", "period": 14, "reason": "Rate of Change"},
+        {"name": "MOM", "timeframe": "1m", "period": 10, "reason": "Pure Momentum"},
+        {"name": "WILLR", "timeframe": "1m", "period": 14, "reason": "Williams %R Exhaustion"},
+        {"name": "MFI", "timeframe": "1m", "period": 14, "reason": "Money Flow Index"},
+    ],
+    "Volatility": [
+        {"name": "ATR", "timeframe": "1m", "period": 14, "reason": "Volatility-based stop loss distance"},
+        {"name": "BBANDS", "timeframe": "1m", "period": 20, "reason": "Volatility Breakouts & Reversion"},
+        {"name": "KELTNER", "timeframe": "1m", "period": 20, "reason": "Keltner Channel"},
+        {"name": "DONCHIAN", "timeframe": "1m", "period": 20, "reason": "Donchian Channel"},
+        {"name": "NATR", "timeframe": "1m", "period": 14, "reason": "Normalized Volatility"},
+    ],
+    "Volume": [
+        {"name": "OBV", "timeframe": "1m", "period": 0, "reason": "On Balance Volume Flow"},
+        {"name": "AD", "timeframe": "1m", "period": 0, "reason": "Chaikin A/D Line"},
+        {"name": "ADX_VOL", "timeframe": "1m", "period": 14, "reason": "ADX Volume Overlay"},
+        {"name": "CMF", "timeframe": "1m", "period": 20, "reason": "Chaikin Money Flow"},
+        {"name": "VWAP", "timeframe": "1m", "period": 0, "reason": "Institutional Average Price Level"},
+    ],
+    "Patterns": [
+        {"name": "CANDLESTICK_PATTERNS", "timeframe": "1m", "period": 0, "reason": "Candlestick Patterns (60+)"},
+        {"name": "CHART_PATTERNS", "timeframe": "1m", "period": 0, "reason": "Chart Patterns"},
+    ],
+    "SupportResistance": [
+        {"name": "PIVOT_POINTS", "timeframe": "1m", "period": 0, "reason": "Pivot Points"},
+        {"name": "FIBONACCI", "timeframe": "1m", "period": 0, "reason": "Fibonacci Levels"},
+        {"name": "DYNAMIC_SR", "timeframe": "1m", "period": 0, "reason": "Dynamic S/R"},
+    ]
+}
+
+def get_default_indicators(trade_mode: str = "INTRADAY", bias: str = "BULLISH") -> list:
+    """
+    Selects the 'better' 2 to 3 indicators from the comprehensive pool 
+    based on the current market condition (trade_mode and bias) to prevent chart clutter.
+    """
+    trade_mode = trade_mode.upper() if trade_mode else "INTRADAY"
+    bias = bias.upper() if bias else "BULLISH"
+    
+    indicators = []
+    
+    if trade_mode == "INTRADAY":
+        # Intraday trading heavily relies on volume profile and dynamic support
+        indicators.append(ALL_DEFAULT_INDICATORS["Volume"][4]) # VWAP (Overlay)
+        
+        if bias in ["BULLISH", "BEARISH"]:
+            # Directional Intraday: Need trend following, speed, and momentum confirmation
+            indicators.append(ALL_DEFAULT_INDICATORS["Trend"][1]) # EMA (Overlay)
+            indicators.append(ALL_DEFAULT_INDICATORS["Trend"][3]) # DEMA (Overlay)
+            indicators.append(ALL_DEFAULT_INDICATORS["Momentum"][0]) # RSI (Subplot)
+            indicators.append(ALL_DEFAULT_INDICATORS["Trend"][5]) # MACD (Subplot)
+        else:
+            # Sideways/Unclear Intraday: Need mean-reversion and volatility bounds
+            indicators.append(ALL_DEFAULT_INDICATORS["Volatility"][1]) # BBANDS (Overlay)
+            indicators.append(ALL_DEFAULT_INDICATORS["Trend"][1]) # EMA (Overlay)
+            indicators.append(ALL_DEFAULT_INDICATORS["Volatility"][0]) # ATR (Subplot)
+            indicators.append(ALL_DEFAULT_INDICATORS["Momentum"][0])   # RSI (Subplot)
+    else:
+        # DELIVERY (Swing/Position Trading)
+        # Swing trading relies on longer-term smoothed trends
+        indicators.append(ALL_DEFAULT_INDICATORS["Volume"][4]) # VWAP (Overlay)
+        indicators.append(ALL_DEFAULT_INDICATORS["Trend"][0]) # SMA (Overlay)
+        
+        if bias in ["BULLISH", "BEARISH"]:
+            # Directional Swing: Need trailing stop basis and entry timing
+            indicators.append(ALL_DEFAULT_INDICATORS["Trend"][1]) # EMA (Overlay)
+            indicators.append(ALL_DEFAULT_INDICATORS["Volatility"][0]) # ATR (Subplot)
+            indicators.append(ALL_DEFAULT_INDICATORS["Momentum"][0])   # RSI (Subplot)
+        else:
+            # Sideways Swing: Need bounds and oscillator exhaustion
+            indicators.append(ALL_DEFAULT_INDICATORS["Volatility"][1]) # BBANDS (Overlay)
+            indicators.append(ALL_DEFAULT_INDICATORS["Trend"][5]) # MACD (Subplot)
+            indicators.append(ALL_DEFAULT_INDICATORS["Momentum"][1])   # STOCH (Subplot)
+
+    return indicators
 
 def _market_date_str() -> str:
     return datetime.now(IST).strftime("%Y-%m-%d")
@@ -269,61 +362,20 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
                 "live_execution_context": live_execution_context
             }
 
-            # ── Read Agent 2.5 technical analysis (pre-computed) ──
-            exec_data = sig.execution_data if isinstance(sig.execution_data, dict) else {}
-            agent25_data = exec_data.get("technical_analysis_data")
-
-            if agent25_data and isinstance(agent25_data, dict):
-                agent3_input["agent25_technical_analysis"] = agent25_data
-                ta = agent25_data.get("technical_analysis", {})
-                overall = ta.get("overall", {})
-                handoff = ta.get("agent_3_handoff", {})
-                print(f"      [AGENT 2.5] {sig.symbol}: bias={overall.get('technical_bias')} "
-                      f"confidence={overall.get('confidence')} grade={overall.get('technical_grade')} "
-                      f"go_no_go={handoff.get('technical_go_no_go')}")
-
-                # Also pass legacy technical_context for backward compatibility
-                agent3_input["technical_context"] = {
-                    "requested_by_agent2": exec_data.get("indicators_computed", []),
-                    "indicator_values": {},
-                    "technical_warnings": ta.get("risks", []),
-                    "technical_confirmations": ta.get("what_agent_3_should_care_about", []),
-                }
-
-                if handoff.get("technical_go_no_go") in ["WAIT", "NO_GO"]:
-                    print(f"      [SKIP] {sig.symbol}: Agent 2.5 technical_go_no_go is {handoff.get('technical_go_no_go')} — skipping execution planning.")
-                    sig.execution_status = "skipped"
-                    sig.executed_at = _now_ms()
-                    exec_data_new = dict(exec_data)
-                    exec_data_new["action"] = "AVOID"
-                    exec_data_new["execution_decision"] = "NO TRADE"
-                    exec_data_new["why_now_or_why_wait"] = handoff.get("go_no_go_reason", "Agent 2.5 determined it is not a GO.")
-                    exec_data_new["_source"] = "agent25_skip"
-                    sig.execution_data = exec_data_new
-                    summary["avoided"] += 1
-                    continue
-            else:
-                # Fallback: compute indicators directly (legacy path)
-                print(f"      [WARN] {sig.symbol}: No Agent 2.5 data — using legacy indicator path")
-                trade_mode = sig.trade_mode or "INTRADAY"
-                if trade_mode == "INTRADAY":
-                    requested_indicators = [
-                        {"name": "RSI", "timeframe": "1m", "reason": "Check short-term exhaustion"},
-                        {"name": "EMA", "timeframe": "1m", "reason": "Check immediate trend"},
-                        {"name": "ATR", "timeframe": "1m", "reason": "Estimate volatility"},
-                    ]
-                else:
-                    requested_indicators = [
-                        {"name": "RSI", "timeframe": "1D", "reason": "Check daily exhaustion"},
-                        {"name": "EMA", "timeframe": "1D", "reason": "Check broader trend"},
-                        {"name": "MACD", "timeframe": "1D", "reason": "Check momentum"},
-                    ]
+            # ── Build technical_context from Agent 2's requested_indicators ──
+            requested_indicators = agent2_view.get("requested_indicators", [])
+            trade_mode = agent2_view.get("trade_mode", sig.trade_mode or "INTRADAY")
+            bias = agent2_view.get("direction", "BULLISH")
+            
+            indicators_to_compute = requested_indicators if requested_indicators else get_default_indicators(trade_mode, bias)
+            
+            if indicators_to_compute and isinstance(indicators_to_compute, list):
                 try:
                     technical_context = build_technical_context(
                         db=db,
                         symbol=sig.symbol,
-                        trade_mode=agent2_view.get("trade_mode", sig.trade_mode or "INTRADAY"),
-                        requested_indicators=requested_indicators,
+                        trade_mode=trade_mode,
+                        requested_indicators=indicators_to_compute,
                         ltp=ltp,
                     )
                     agent3_input["technical_context"] = technical_context
@@ -687,16 +739,21 @@ def run_execution_from_live_news(
             from agent.data_collector import fetch_stock_data_for_symbols
             live_data_map = fetch_stock_data_for_symbols([symbol])
             live_data = live_data_map.get(symbol, {})
-            ltp = live_data.get("ltp", 0)
+            # Note: fetch_stock_data_for_symbols uses 'last_close' as LTP
+            ltp = live_data.get("last_close") or live_data.get("ltp", 0)
 
             if ltp and ltp > 0:
-                default_indicators = ["RSI", "EMA_20", "ATR"]
+                indicators_to_compute = live_news_output.get("requested_indicators")
+                if not indicators_to_compute:
+                    bias_condition = live_news_output.get("market_bias", "BULLISH")
+                    indicators_to_compute = get_default_indicators("INTRADAY", bias_condition)
+                
                 try:
                     technical_context = build_technical_context(
                         db=db,
                         symbol=symbol,
                         trade_mode="INTRADAY",
-                        requested_indicators=default_indicators,
+                        requested_indicators=indicators_to_compute,
                         ltp=ltp,
                     )
                     agent3_input["technical_context"] = technical_context
@@ -710,7 +767,7 @@ def run_execution_from_live_news(
                     chart_image_bytes = generate_technical_chart(
                         symbol=symbol,
                         trade_mode="INTRADAY",
-                        requested_indicators=default_indicators,
+                        requested_indicators=indicators_to_compute,
                         ltp=ltp,
                         direction=direction,
                     )
