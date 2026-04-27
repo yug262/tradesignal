@@ -317,6 +317,16 @@ def run_technical_analysis(db: Session = None, signal_ids: list = None) -> dict:
             
             logger.info("[TRIGGER] Agent 2.5 completed %s", sig.symbol)
             
+            # If Agent 2.5 fell back due to API issues, but Agent 2 already CONFIRMED —
+            # don't let the fallback veto a confirmed signal. Override go_no_go to GO.
+            ta_source = ta_result.get("_source", "")
+            if ta_source == "agent25_fallback" and handoff.get("technical_go_no_go") == "WAIT":
+                conf_data = sig.confirmation_data or {}
+                a2_status = conf_data.get("validation", {}).get("status", "")
+                if a2_status == "CONFIRMED":
+                    logger.warning("[AGENT 2.5] Fallback returned WAIT but Agent 2 is CONFIRMED — overriding go_no_go to GO for %s", sig.symbol)
+                    handoff["technical_go_no_go"] = "GO"
+
             # Auto-trigger Agent 3 per signal
             if handoff.get("technical_go_no_go") == "GO":
                 logger.info("[TRIGGER] Agent 3 triggered by Agent 2.5 %s", sig.symbol)

@@ -295,23 +295,28 @@ def _compute_indicators_for_chart(
     lows = df["Low"].values
 
     for req in requested_indicators[:4]:  # Cap at 4
-        name = str(req.get("name", "")).upper().strip()
+        if isinstance(req, str):
+            name = req.upper().strip()
+            req_dict = {"name": name} # Dummy dict for get() calls below
+        else:
+            name = str(req.get("name", "")).upper().strip()
+            req_dict = req
 
         try:
             if name in ("EMA",):
-                period = int(req.get("period", 20))
+                period = int(req_dict.get("period", 20))
                 vals = talib.EMA(closes, timeperiod=period) if use_talib else _np_ema(closes, period)
                 series = pd.Series(vals, index=df.index, name=f"EMA({period})")
                 result["overlays"].append((f"EMA({period})", series, CHART_STYLE["ema_color"]))
 
             elif name in ("SMA",):
-                period = int(req.get("period", 20))
+                period = int(req_dict.get("period", 20))
                 vals = talib.SMA(closes, timeperiod=period) if use_talib else _np_sma(closes, period)
                 series = pd.Series(vals, index=df.index, name=f"SMA({period})")
                 result["overlays"].append((f"SMA({period})", series, CHART_STYLE["sma_color"]))
 
             elif name == "RSI":
-                period = int(req.get("period", 14))
+                period = int(req_dict.get("period", 14))
                 vals = talib.RSI(closes, timeperiod=period) if use_talib else _np_rsi(closes, period)
                 result["rsi"] = pd.Series(vals, index=df.index, name=f"RSI({period})")
 
@@ -327,12 +332,12 @@ def _compute_indicators_for_chart(
                 )
 
             elif name in ("ATR", "NATR"):
-                period = int(req.get("period", 14))
+                period = int(req_dict.get("period", 14))
                 vals = talib.ATR(highs, lows, closes, timeperiod=period) if use_talib else _np_atr(highs, lows, closes, period)
                 result["atr"] = pd.Series(vals, index=df.index, name=f"ATR({period})")
 
             elif name == "BBANDS":
-                period = int(req.get("period", 20))
+                period = int(req_dict.get("period", 20))
                 if use_talib:
                     upper, middle, lower = talib.BBANDS(closes, timeperiod=period)
                 else:
@@ -342,7 +347,7 @@ def _compute_indicators_for_chart(
                 result["overlays"].append(("BB Mid", pd.Series(middle, index=df.index), CHART_STYLE["sma_color"]))
 
             elif name in ("WMA",):
-                period = int(req.get("period", 20))
+                period = int(req_dict.get("period", 20))
                 if use_talib:
                     vals = talib.WMA(closes, timeperiod=period)
                 else:

@@ -284,9 +284,15 @@ def build_technical_context(
 
     # Step 1: Process each requested indicator
     for req in indicators_to_process:
-        ind_name = str(req.get("name", "")).upper().strip()
-        ind_tf = str(req.get("timeframe", "")).strip()
-        ind_reason = str(req.get("reason", "")).strip()
+        if isinstance(req, str):
+            ind_name = req.upper().strip()
+            ind_tf = "1m" if trade_mode == "INTRADAY" else "1D"
+            ind_reason = "Technical validation"
+        else:
+            ind_name = str(req.get("name", "")).upper().strip()
+            ind_tf = str(req.get("timeframe", "")).strip()
+            ind_reason = str(req.get("reason", "")).strip()
+        
         key = f"{ind_name}_{ind_tf}" if ind_tf else ind_name
 
         try:

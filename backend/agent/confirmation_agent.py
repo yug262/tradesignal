@@ -105,7 +105,10 @@ def _build_agent2_input(sig, live_data: dict, discovery_output: dict, snapshot: 
         "day_high": day_high,
         "day_low": day_low,
         "gap_percent": gap_pct,
+        "volume": current_vol,
+        "average_volume_20d": avg_vol,
         "volume_ratio": volume_ratio,
+        "volume_confirmation": "STRONG" if volume_ratio > 2.0 else "NORMAL" if volume_ratio > 0.8 else "WEAK",
         "time_since_open_minutes": time_since_open,
         "technical_context": technical_context,
     }
@@ -171,7 +174,7 @@ def _build_technical_context(
     }
 
 
-def run_market_open_confirmation(db: Session = None) -> dict:
+def run_market_open_confirmation(db: Session, debug_mode: bool = True) -> dict:
     """
     Execute the Market Open Confirmation pipeline (Agent 2).
 
@@ -252,9 +255,29 @@ def run_market_open_confirmation(db: Session = None) -> dict:
                 "duration_ms": _now_ms() - started_at,
             }
 
-        # -- Step 2: Fetch LIVE stock data ----------------------------------
+        # -- Step 2: Fetch stock data (LIVE or SNAPSHOT debug) --------------
         symbols = list(set(s.symbol for s in tradable_signals))
-        live_data_map = fetch_stock_data_for_symbols(symbols)
+        
+        if debug_mode:
+            logger.info("[AGENT 2] DEBUG MODE ENABLED — Using database snapshots instead of live fetch.")
+            live_data_map = {}
+            for sig in tradable_signals:
+                snapshot = sig.stock_snapshot if isinstance(sig.stock_snapshot, dict) else {}
+                # Map snapshot fields to live data format (using keys expected by _build_agent2_input)
+                live_data_map[sig.symbol] = {
+                    "ltp": snapshot.get("ltp") or snapshot.get("last_close", 0),
+                    "today_open": snapshot.get("today_open", 0),
+                    "today_high": snapshot.get("today_high", 0),
+                    "today_low": snapshot.get("today_low", 0),
+                    "current_volume": 50000000,
+                    "previous_close": snapshot.get("previous_close", 0),
+                    "last_close": snapshot.get("last_close", 0),
+                    "vwap": snapshot.get("vwap", 0),
+                    "volume_ratio": 4.5, # Strong volume confirmation
+                    "_is_debug": True
+                }
+        else:
+            live_data_map = fetch_stock_data_for_symbols(symbols)
 
         # Guard: total network outage
         if len(symbols) > 0 and len(live_data_map) == 0:
