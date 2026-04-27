@@ -149,13 +149,11 @@ Indicators must NOT:
 - Replace structural analysis of price location
 
 STEP 1.6 — VISUAL CHART ANALYSIS (IF PROVIDED)
-If a technical chart image is attached to this request, analyze it visually:
-- Examine candlestick patterns: doji, engulfing, hammer, shooting star, marubozu, etc.
-- Observe price structure: higher highs/lows, lower highs/lows, range, breakout, breakdown
-- Read indicator subplots (RSI, MACD, ATR) for divergences, crossovers, and extremes
-- Assess volume profile: increasing on breakouts, declining on pullbacks
-- Check support/resistance zones visible from candle clustering
-- Identify trend direction from moving average slopes and price relationship to MAs
+If a technical chart image is attached to this request, analyze it visually. The image contains 4 specific subplots to help your execution decision:
+1. Chart 1 (Top): Price Action & Trend Indicators — Examine candlestick patterns (doji, engulfing, etc.), price structure (higher highs/lows, range, breakouts), and trend direction using moving average slopes (EMA/SMA) and price relationship to them. Check support/resistance zones visible from candle clustering.
+2. Chart 2: Momentum Indicator (MACD or RSI) — Look for momentum extremes (overbought/oversold), divergences between price and momentum, or MACD crossovers.
+3. Chart 3: Volatility Indicator (ATR) — Assess current volatility expansion or contraction to help determine optimal stop-loss width.
+4. Chart 4 (Bottom): Volume Indicator — Assess volume profile: is volume increasing on breakouts and declining on pullbacks?
 
 Visual analysis MUST:
 - Complement (not replace) the numeric indicator_values already provided
