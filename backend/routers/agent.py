@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 
 import db_models
 from database import get_db
-from agent.signal_generator import run_full_analysis
-from agent.confirmation_agent import run_market_open_confirmation
+from agent.discovery.signal_generator import run_full_analysis
+from agent.confirmation.confirmation_agent import run_market_open_confirmation
 from agent.market_calendar import is_trading_day, get_news_fetch_window
 
 router = APIRouter(prefix="/api/agent", tags=["agent"])
@@ -43,7 +43,7 @@ def trigger_confirmation_run(db: Session = Depends(get_db)):
     return result
 
 
-from agent.execution_agent import run_execution_planner
+from agent.execution.execution_agent import run_execution_planner
 
 @router.post("/execute")
 def trigger_execution_run(db: Session = Depends(get_db)):
@@ -56,7 +56,7 @@ def trigger_execution_run(db: Session = Depends(get_db)):
     return result
 
 
-from agent.technical_analysis_agent import run_technical_analysis
+from agent.technical_analysis.technical_analysis_agent import run_technical_analysis
 
 @router.post("/technical-analysis")
 def trigger_technical_analysis(db: Session = Depends(get_db)):
@@ -69,7 +69,7 @@ def trigger_technical_analysis(db: Session = Depends(get_db)):
     return result
 
 
-from agent.risk_monitor import run_risk_monitor, get_risk_monitor_summary
+from agent.risk.risk_monitor import run_risk_monitor, get_risk_monitor_summary
 
 @router.post("/risk-monitor")
 def trigger_risk_monitor(db: Session = Depends(get_db)):
@@ -389,7 +389,7 @@ def trigger_live_news_monitor():
     Normally runs every 60 seconds automatically during market hours.
     Use this to manually trigger a cycle for testing or on-demand analysis.
     """
-    from agent.live_news_agent import run_live_news_monitor
+    from agent.discovery.live_news_agent import run_live_news_monitor
     result = run_live_news_monitor()
     return result
 

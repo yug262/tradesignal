@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-logger = logging.getLogger("live_analyzer")
+logger = logging.getLogger("agent.discovery.gemini_live_analyzer")
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 MODEL_NAME = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")

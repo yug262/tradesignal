@@ -26,7 +26,7 @@ import db_models
 from database import SessionLocal
 from store import _get_store
 from agent.data_collector import trigger_news_fetch
-from agent.gemini_live_analyzer import analyze_live
+from .gemini_live_analyzer import analyze_live
 from agent.market_calendar import is_trading_day, IST
 
 # ── Constants ─────────────────────────────────────────────────────────────────
@@ -273,7 +273,7 @@ def _try_trigger_agent3(symbol: str, live_event: db_models.DBLiveNewsEvent, db: 
     analysis context to Agent 3's execution pipeline.
     """
     try:
-        from agent.execution_agent import run_execution_for_signal
+        from agent.execution.execution_agent import run_execution_for_signal
         from datetime import date
 
         market_date = date.today().strftime("%Y-%m-%d")
@@ -443,7 +443,7 @@ def run_live_news_monitor() -> dict:
                 # Agent 3 decides internally: ENTER NOW / WAIT / NO TRADE.
                 print(f"     Triggering Agent 3 immediately...")
                 try:
-                    from agent.execution_agent import run_execution_from_live_news
+                    from agent.execution.execution_agent import run_execution_from_live_news
                     agent3_result = run_execution_from_live_news(
                         symbol=symbol,
                         live_news_output=gemini_output,

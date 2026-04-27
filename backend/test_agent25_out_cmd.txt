@@ -1,0 +1,127 @@
+   [CHART] TEST_GO: Chart generation returned None — text-only
+   [CHART] TEST_WAIT: Chart generation returned None — text-only
+   [CHART] TEST_FALLBACK: Chart generation returned None — text-only
+[AGENT 2.5] Gemini unavailable — using fallback for TEST_FALLBACK
+[AGENT 2.5] Fallback returned WAIT but Agent 2 is CONFIRMED — overriding go_no_go to GO for TEST_FALLBACK
+============================================================
+TESTING AGENT 2.5 INTEGRATION
+============================================================
+
+[Test 1] Agent 2 CONFIRMED + Agent 2.5 GO
+
+============================================================
+[AGENT 3] EXECUTION PLANNER -- Run ID: exec-2026-04-27-bb9b5577
+   Market Date: 2026-04-27
+   Time: 17:13:15 IST
+============================================================
+   [CONFIG] Capital: Rs.100,000 | Max loss/trade: 1.0% | Max capital/trade: 20.0% | Min R:R: 1.5
+
+[STEP 4] Running Gemini Execution Planner (1 signals, concurrent)...
+
+
+############################################################
+  [PROCESSING SYMBOL: TEST_GO]
+############################################################
+
+      [AGENT 2.5] TEST_GO: bias=BULLISH confidence=HIGH grade=A go_no_go=GO
+
+  [CHART] Generating technical chart for TEST_GO...
+  [CHART] Not enough candle data for TEST_GO (got 0)
+      [CHART] TEST_GO: Chart generation returned empty
+      [GEMINI] Agent 3 planning TEST_GO (sig=test_TEST_GO)...
+      [RESULT] TEST_GO: ENTER_NOW | NO TRADE | Confidence: None
+      [AGENT 3] TEST_GO: V2 action=ENTER_NOW
+      [AGENT 3]   trade_mode=INTRADAY direction=LONG
+      [AGENT 3]   entry=100.0 sl=90.0 target=110.0 rr=2.0
+      [AGENT 3]   quantity=10 capital=1000
+      [SIZING] 10 shares @ Rs.100.0 = Rs.1,000 (0% of capital)
+      [AGENT 3] paper_trade_created=pending
+  [AUTO-TRADE] TEST_GO: action=BUY entry=100.0 sl=90.0 target=110.0 qty=10
+      [PAPER TRADE] Failed: Risk Limit: Max 5 open/pending positions allowed.
+      [AGENT 3] paper_trade_created=false
+
+============================================================
+[DONE] Agent 3 Pipeline Complete
+   Duration: 776ms
+============================================================
+
+  Agent 2.5 ran: 1 analyzed
+  Agent 3 was auto-triggered: False
+  Signal Execution Status: skipped (Should be planned)
+
+[Test 2] Agent 2 CONFIRMED + Agent 2.5 WAIT
+  Signal Execution Status: pending (Should be skipped)
+  Agent 3 action: None
+  Reason: None
+
+[Test 3] Agent 2.5 Fallback Used
+
+============================================================
+[AGENT 3] EXECUTION PLANNER -- Run ID: exec-2026-04-27-f411a363
+   Market Date: 2026-04-27
+   Time: 17:13:16 IST
+============================================================
+   [CONFIG] Capital: Rs.100,000 | Max loss/trade: 1.0% | Max capital/trade: 20.0% | Min R:R: 1.5
+
+[STEP 4] Running Gemini Execution Planner (1 signals, concurrent)...
+
+
+############################################################
+  [PROCESSING SYMBOL: TEST_FALLBACK]
+############################################################
+
+      [AGENT 2.5] TEST_FALLBACK: bias=NEUTRAL confidence=LOW grade=C go_no_go=WAIT
+      [SKIP] TEST_FALLBACK: Agent 2.5 technical_go_no_go is WAIT — skipping execution planning.
+
+============================================================
+[DONE] Agent 3 Pipeline Complete
+   Duration: 3ms
+============================================================
+
+  Source: agent25_fallback (Should be agent25_fallback)
+  Go/No-Go: WAIT
+
+[Test 4] Validator rejects forbidden execution fields
+  [PASS] Validator correctly rejected: forbidden execution field detected: 'stop_loss'; forbidden execution field detected: 'entry_price'
+
+[Test 5] Manual Agent 3 trigger (no Agent 2.5 data)
+
+============================================================
+[AGENT 3] EXECUTION PLANNER -- Run ID: exec-2026-04-27-87cd1a03
+   Market Date: 2026-04-27
+   Time: 17:13:16 IST
+============================================================
+   [CONFIG] Capital: Rs.100,000 | Max loss/trade: 1.0% | Max capital/trade: 20.0% | Min R:R: 1.5
+
+[STEP 4] Running Gemini Execution Planner (2 signals, concurrent)...
+
+
+############################################################
+  [PROCESSING SYMBOL: TEST_MANUAL]
+############################################################
+
+      [WARN] TEST_MANUAL: No Agent 2.5 data — using legacy indicator path
+
+  [CHART] Generating technical chart for TEST_MANUAL...
+  [CHART] Not enough candle data for TEST_MANUAL (got 0)
+      [CHART] TEST_MANUAL: Chart generation returned empty
+      [SKIP] TEST_WAIT: No live data — isolated fetch failure
+      [GEMINI] Agent 3 planning TEST_MANUAL (sig=test_TEST_MA)...
+      [RESULT] TEST_MANUAL: ENTER_NOW | NO TRADE | Confidence: None
+      [AGENT 3] TEST_MANUAL: V2 action=ENTER_NOW
+      [AGENT 3]   trade_mode=INTRADAY direction=LONG
+      [AGENT 3]   entry=100.0 sl=90.0 target=110.0 rr=2.0
+      [AGENT 3]   quantity=10 capital=1000
+      [SIZING] 10 shares @ Rs.100.0 = Rs.1,000 (0% of capital)
+      [AGENT 3] paper_trade_created=pending
+  [AUTO-TRADE] TEST_MANUAL: action=BUY entry=100.0 sl=90.0 target=110.0 qty=10
+      [PAPER TRADE] Failed: Risk Limit: Max 5 open/pending positions allowed.
+      [AGENT 3] paper_trade_created=false
+
+============================================================
+[DONE] Agent 3 Pipeline Complete
+   Duration: 634ms
+============================================================
+
+  Legacy indicator build called: True
+  Signal Execution Status: skipped (Should be planned)

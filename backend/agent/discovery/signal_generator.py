@@ -26,7 +26,7 @@ from database import SessionLocal
 from store import _get_store
 
 from agent.data_collector import fetch_recent_news, trigger_news_fetch, fetch_stock_data_for_symbols
-from agent.gemini_analyzer import analyze_stock
+from .gemini_analyzer import analyze_stock
 from agent.market_calendar import get_news_fetch_window, is_trading_day, IST as MARKET_IST
 
 logger = logging.getLogger(__name__)

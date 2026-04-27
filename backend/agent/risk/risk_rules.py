@@ -29,7 +29,7 @@ import logging
 from typing import Optional
 from datetime import datetime, timezone, timedelta
 
-logger = logging.getLogger("risk_rules")
+logger = logging.getLogger("agent.risk.risk_rules")
 
 IST = timezone(timedelta(hours=5, minutes=30))
 

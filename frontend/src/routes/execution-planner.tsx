@@ -34,7 +34,6 @@ function ExecutionPlannerPage() {
   const [status, setStatus] = useState<any>(null);
   const [loading, setLoading] = useState(true);
   const [runningExec, setRunningExec] = useState(false);
-  const [runningRisk, setRunningRisk] = useState(false);
   const [execFilter, setExecFilter] = useState<string>("ALL");
   const [expandedId, setExpandedId] = useState<string | null>(null);
 
@@ -67,18 +66,6 @@ function ExecutionPlannerPage() {
       console.error("Agent execution run failed", err);
     } finally {
       setRunningExec(false);
-    }
-  };
-
-  const triggerRiskMonitor = async () => {
-    setRunningRisk(true);
-    try {
-      await api.triggerRiskMonitor();
-      await loadSignals();
-    } catch (err) {
-      console.error("Risk monitor run failed", err);
-    } finally {
-      setRunningRisk(false);
     }
   };
 
@@ -176,18 +163,6 @@ function ExecutionPlannerPage() {
           >
             <RefreshCw size={10} className={`mr-1 ${loading ? "animate-spin" : ""}`} />
             Refresh
-          </Button>
-          <Button
-            size="sm"
-            onClick={triggerRiskMonitor}
-            disabled={runningRisk}
-            className="font-mono text-[10px] h-6 bg-rose-600 text-white hover:bg-rose-700 shadow-[0_0_15px_rgba(225,29,72,0.3)]"
-          >
-            {runningRisk ? (
-              <><RefreshCw size={10} className="mr-1 animate-spin" /> Monitoring...</>
-            ) : (
-              <><ShieldAlert size={10} className="mr-1" /> Run Risk Monitor</>
-            )}
           </Button>
           <Button
             size="sm"

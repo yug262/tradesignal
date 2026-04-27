@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 import db_models
 from database import SessionLocal
 from agent.data_collector import fetch_stock_data_for_symbols
-from agent.gemini_executor import plan_execution
+from .gemini_executor import plan_execution
 from services.indicator_service import build_technical_context
 from services.chart_generator import generate_technical_chart
 
@@ -290,6 +290,7 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
                     "_source": "no_data_skip"
                 }
                 summary["skipped"] += 1
+                continue
             # --- LOGGING: [PROCESSING SYMBOL] ---
             print(f"\n\n{'#'*60}")
             print(f"  [PROCESSING SYMBOL: {sig.symbol}]")
@@ -419,7 +420,7 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
                         db=db,
                         symbol=sig.symbol,
                         trade_mode=trade_mode,
-                        requested_indicators=indicators_to_compute,
+                        requested_indicators=requested_indicators,
                         ltp=ltp,
                     )
                     agent3_input["technical_context"] = technical_context
@@ -845,7 +846,7 @@ def run_execution_from_live_news(
                         db=db,
                         symbol=symbol,
                         trade_mode="INTRADAY",
-                        requested_indicators=indicators_to_compute,
+                        requested_indicators=default_indicators,
                         ltp=ltp,
                     )
                     agent3_input["technical_context"] = technical_context

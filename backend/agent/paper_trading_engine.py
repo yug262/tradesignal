@@ -242,7 +242,7 @@ def create_paper_trade(
 
     # 3. Market Time Rule (No new trades after 15:10 for intraday)
     now_ist = datetime.now(IST)
-    if trade_mode == "INTRADAY" and (now_ist.hour > 15 or (now_ist.hour == 15 and now_ist.minute >= 10)):
+    if not allow_outside_hours and trade_mode == "INTRADAY" and (now_ist.hour > 15 or (now_ist.hour == 15 and now_ist.minute >= 10)):
          return {
             "success": False,
             "error": "Risk Limit: No new intraday trades allowed after 15:10 IST."

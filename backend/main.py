@@ -21,15 +21,21 @@ def _setup_agent_logger(name: str) -> None:
     lg.propagate = False  # Don't bubble up to Uvicorn's root logger
 
 for _agent_logger in [
-    "agent.confirmation_agent",
-    "agent.gemini_confirmer",
-    "agent.technical_analysis_agent",
-    "agent.gemini_technical_analyzer",
-    "agent.execution_agent",
-    "agent.gemini_executor",
-    "agent.live_news_agent",
-    "agent.risk_monitor",
-    "agent.signal_generator",
+    "agent.discovery.signal_generator",
+    "agent.discovery.live_news_agent",
+    "agent.discovery.gemini_analyzer",
+    "agent.discovery.gemini_live_analyzer",
+    "agent.confirmation.confirmation_agent",
+    "agent.confirmation.gemini_confirmer",
+    "agent.technical_analysis.technical_analysis_agent",
+    "agent.technical_analysis.gemini_technical_analyzer",
+    "agent.execution.execution_agent",
+    "agent.execution.gemini_executor",
+    "agent.execution.risk_agent_validator",
+    "agent.risk.risk_monitor",
+    "agent.risk.gemini_risk_monitor",
+    "agent.risk.risk_rules",
+    "agent.risk.risk_features",
     "agent.paper_trading_engine",
 ]:
     _setup_agent_logger(_agent_logger)

@@ -142,7 +142,7 @@ def _pre_market_agent_job():
       5. Run Gemini Discovery analysis on each symbol
       6. Save WATCH / NO_TRADE assessments (status: pending_confirmation)
     """
-    from agent.signal_generator import run_full_analysis
+    from agent.discovery.signal_generator import run_full_analysis
 
     now = datetime.now(IST)
     today = now.date()
@@ -195,7 +195,7 @@ def _market_open_confirmation_job():
       5. Run Gemini confirmation analysis on each signal
       6. Update signals: CONFIRMED (TRADE) / INVALIDATED (NO TRADE)
     """
-    from agent.confirmation_agent import run_market_open_confirmation
+    from agent.confirmation.confirmation_agent import run_market_open_confirmation
 
     now = datetime.now(IST)
     today = now.date()
@@ -245,7 +245,7 @@ def _risk_monitor_job():
       - Per-trade throttling (won't re-check a trade within 25s)
       - Error isolation (one trade failure doesn't crash others)
     """
-    from agent.risk_monitor import run_risk_monitor
+    from agent.risk.risk_monitor import run_risk_monitor
 
     now = datetime.now(IST)
 
@@ -308,7 +308,7 @@ def _live_news_monitor_job():
       - In-session article deduplication (won't re-analyze same article)
       - Error isolation per symbol
     """
-    from agent.live_news_agent import run_live_news_monitor
+    from agent.discovery.live_news_agent import run_live_news_monitor
 
     now = datetime.now(IST)
 
