@@ -55,7 +55,14 @@ def _build_agent2_input(sig, live_data: dict, discovery_output: dict, snapshot: 
 
     # Extract Agent 1 combined_view
     cv = discovery_output.get("combined_view", {})
-    reasoning = cv.get("reasoning", {})
+    reasoning_raw = cv.get("reasoning", {})
+    # reasoning can be a plain string (legacy) or a dict — normalise to dict
+    if isinstance(reasoning_raw, str):
+        reasoning = {"main_driver": reasoning_raw, "supporting_points": [], "risk_points": []}
+    elif isinstance(reasoning_raw, dict):
+        reasoning = reasoning_raw
+    else:
+        reasoning = {}
 
     agent_1_view = {
         "final_bias": cv.get("final_bias", "NEUTRAL"),
@@ -67,9 +74,9 @@ def _build_agent2_input(sig, live_data: dict, discovery_output: dict, snapshot: 
         "key_risks": cv.get("key_risks", []),
         "reasoning": {
             "why_agent_gave_this_view": reasoning.get("why_agent_gave_this_view", ""),
-            "main_driver": reasoning.get("main_driver", ""),
-            "supporting_points": reasoning.get("supporting_points", []),
-            "risk_points": reasoning.get("risk_points", []),
+            "main_driver": reasoning.get("main_driver", cv.get("main_driver", "")),
+            "supporting_points": reasoning.get("supporting_points", cv.get("supporting_points", [])),
+            "risk_points": reasoning.get("risk_points", cv.get("key_risks", [])),
             "confidence_reason": reasoning.get("confidence_reason", ""),
             "what_agent_2_should_validate": reasoning.get("what_agent_2_should_validate", []),
         },
@@ -218,27 +225,30 @@ def run_market_open_confirmation(db: Session, debug_mode: bool = True) -> dict:
                 "duration_ms": 0,
             }
 
-        # Filter tradable (WATCH only) — NO_TRADE signals are auto-skipped
-        tradable_signals = [s for s in pending_signals if s.signal_type == "WATCH"]
-        skip_signals = [s for s in pending_signals if s.signal_type != "WATCH"]
+        # Filter: skip signals that were explicitly marked NO_TRADE by Agent 1
+        # signal_type holds trade DIRECTION (BUY/SELL), NOT the discovery decision.
+        # The discovery skip flag is stored in reasoning.combined_view.final_bias == "NO_TRADE"
+        # or status == "no_trade". We gate on status — anything that reached "pending_execution"
+        # with confirmation_status="pending" is valid for Agent 2.
+        no_trade_signals = [s for s in pending_signals if s.status == "no_trade"]
+        tradable_signals = [s for s in pending_signals if s.status != "no_trade"]
 
-        # Auto-skip non-tradable signals
+        # Auto-skip no-trade signals
         results = []
         summary = {"confirmed": 0, "weakened": 0, "invalidated": 0, "skipped": 0}
 
-        for sig in skip_signals:
+        for sig in no_trade_signals:
             sig.confirmation_status = "invalidated"
             sig.confirmed_at = _now_ms()
-            sig.status = "invalidated"
             sig.confirmation_data = {
-                "validation": {"status": "INVALIDATED", "reason": f"Auto-skipped: signal_type={sig.signal_type}"},
+                "validation": {"status": "INVALIDATED", "reason": "Agent 1 marked as NO_TRADE"},
                 "decision": {"should_pass_to_agent_3": False, "agent_3_instruction": "DO_NOT_PROCEED"},
                 "_source": "auto_skip",
             }
             results.append({
                 "symbol": sig.symbol,
                 "status": "SKIPPED",
-                "reason": f"Auto-skipped: signal_type={sig.signal_type}",
+                "reason": "Agent 1 NO_TRADE",
             })
             summary["skipped"] += 1
             db.commit()

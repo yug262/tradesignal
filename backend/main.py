@@ -3,23 +3,39 @@ from fastapi.middleware.cors import CORSMiddleware
 import logging
 import sys
 
-# Configure global logging — must use force=True or explicit handler so
-# Uvicorn's reload mode (which calls basicConfig first) doesn't swallow our logs.
-root_logger = logging.getLogger()
-root_logger.setLevel(logging.INFO)
+# ── Agent logging setup ───────────────────────────────────────────────────────
+# Uvicorn (especially with reload=True) configures the root logger before
+# main.py runs, making logging.basicConfig() a no-op.
+# Fix: give each agent logger its own StreamHandler(stdout) + propagate=False,
+# so they bypass the root logger entirely and always print to the terminal.
 
-# Only add handler if none exist yet (idempotent across reloads)
-if not root_logger.handlers:
-    _handler = logging.StreamHandler(sys.stdout)
-    _handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
-    root_logger.addHandler(_handler)
-else:
-    # Uvicorn already set a handler — make sure it includes our format and goes to stdout
-    for _h in root_logger.handlers:
-        _h.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+_LOG_FMT = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
 
-# Silence noisy third-party loggers
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+def _setup_agent_logger(name: str) -> None:
+    lg = logging.getLogger(name)
+    lg.setLevel(logging.INFO)
+    if not any(isinstance(h, logging.StreamHandler) for h in lg.handlers):
+        _h = logging.StreamHandler(sys.stdout)
+        _h.setFormatter(_LOG_FMT)
+        lg.addHandler(_h)
+    lg.propagate = False  # Don't bubble up to Uvicorn's root logger
+
+for _agent_logger in [
+    "agent.confirmation_agent",
+    "agent.gemini_confirmer",
+    "agent.technical_analysis_agent",
+    "agent.gemini_technical_analyzer",
+    "agent.execution_agent",
+    "agent.gemini_executor",
+    "agent.live_news_agent",
+    "agent.risk_monitor",
+    "agent.signal_generator",
+    "agent.paper_trading_engine",
+]:
+    _setup_agent_logger(_agent_logger)
+
+# Silence noisy third-party loggers (keep access logs ON so we see API calls)
+logging.getLogger("uvicorn.access").setLevel(logging.INFO)   # ← show GET/POST hits
 logging.getLogger("httpx").setLevel(logging.WARNING)
 logging.getLogger("google_genai").setLevel(logging.WARNING)
 logging.getLogger("google").setLevel(logging.WARNING)

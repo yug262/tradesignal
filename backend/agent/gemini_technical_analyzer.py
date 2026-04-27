@@ -87,6 +87,11 @@ You MUST return ONLY valid JSON matching the required schema. No text outside JS
 
 AGENT25_PROMPT_TEMPLATE = """Analyze the technical structure for {symbol} on {market_date}.
 
+=== CHART IMAGE ===
+A technical chart image has been provided above. Use it to visually confirm or contradict the indicator data below.
+Look for: trend direction, candlestick patterns, key price levels, volume bars, MACD/RSI subplot behavior.
+Always reference specific chart observations in your reasoning.
+
 === AGENT 2 VALIDATION CONTEXT ===
 {agent2_json}
 
@@ -339,6 +344,7 @@ def analyze_technicals(
     candle_data: list,
     indicator_data: dict,
     sr_levels: dict,
+    chart_image_bytes: bytes = None,
 ) -> dict:
     """
     Use Gemini to produce structured technical analysis.
@@ -350,6 +356,8 @@ def analyze_technicals(
         candle_data: List of OHLCV candle dicts (time-aligned)
         indicator_data: Dict of indicator name -> time-series values
         sr_levels: Support/resistance levels dict
+        chart_image_bytes: Optional PNG bytes of the technical chart.
+                           When provided, sent to Gemini as a multimodal image.
 
     Returns:
         Dict conforming to Agent 2.5 technical analysis output schema.
@@ -367,13 +375,24 @@ def analyze_technicals(
         sr_json=json.dumps(sr_levels, indent=2),
     )
 
+    # Build contents: text prompt + optional chart image
+    if chart_image_bytes:
+        logger.info("[AGENT 2.5] %s: Sending chart image to Gemini (%d KB)", symbol, len(chart_image_bytes) // 1024)
+        contents = [
+            types.Part.from_bytes(data=chart_image_bytes, mime_type="image/png"),
+            types.Part.from_text(text=prompt),
+        ]
+    else:
+        logger.info("[AGENT 2.5] %s: No chart — sending text-only to Gemini", symbol)
+        contents = prompt
+
     import time as _time
     max_retries = 5
     for attempt in range(1, max_retries + 1):
         try:
             response = _client.models.generate_content(
                 model=MODEL_NAME,
-                contents=prompt,
+                contents=contents,
                 config=types.GenerateContentConfig(
                     system_instruction=AGENT25_SYSTEM_INSTRUCTION,
                     temperature=0.1,

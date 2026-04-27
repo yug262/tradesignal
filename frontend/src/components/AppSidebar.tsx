@@ -29,12 +29,6 @@ interface NavItem {
 const NAV_ITEMS: NavItem[] = [
   { path: "/", label: "Dashboard", icon: <LayoutDashboard size={16} /> },
   {
-    path: "/opportunities",
-    label: "Opportunities",
-    icon: <TrendingUp size={16} />,
-    phase: 2,
-  },
-  {
     path: "/agent-signals",
     label: "Trade Signal (A1)",
     icon: <Brain size={16} />,
@@ -64,30 +58,6 @@ const NAV_ITEMS: NavItem[] = [
     path: "/grouping",
     label: "Stock Grouping",
     icon: <LayoutGrid size={16} />,
-  },
-  {
-    path: "/mode-analysis",
-    label: "Mode Analysis",
-    icon: <BarChart3 size={16} />,
-    phase: 3,
-  },
-  {
-    path: "/trade-planner",
-    label: "Trade Planner",
-    icon: <ClipboardList size={16} />,
-    phase: 4,
-  },
-  {
-    path: "/journal",
-    label: "Journal",
-    icon: <BookOpen size={16} />,
-    phase: 6,
-  },
-  {
-    path: "/market-regime",
-    label: "Market Regime",
-    icon: <Globe size={16} />,
-    phase: 2,
   },
 ];
 

@@ -254,6 +254,29 @@ def run_technical_analysis(db: Session = None, signal_ids: list = None) -> dict:
             # Step 4: Build S/R levels
             sr_levels = _build_sr_levels(agent2_data)
 
+            # Step 4a: Generate technical chart and pass to Gemini as a visual
+            chart_image_bytes = None
+            try:
+                from services.chart_generator import generate_technical_chart
+                from agent.execution_agent import get_default_indicators
+                # Infer bias from Agent 2 for chart indicator selection
+                a1_view = agent2_data.get("agent_1_view", {})
+                bias = str(a1_view.get("final_bias", "NEUTRAL")).upper()
+                chart_indicators = get_default_indicators(trade_mode=trade_mode, bias=bias)
+                chart_image_bytes = generate_technical_chart(
+                    symbol=sig.symbol,
+                    trade_mode=trade_mode,
+                    requested_indicators=chart_indicators,
+                    ltp=ltp,
+                )
+                if chart_image_bytes:
+                    logger.info("   [CHART] %s: Chart generated (%dKB) — sending to Gemini",
+                                sig.symbol, len(chart_image_bytes) // 1024)
+                else:
+                    logger.warning("   [CHART] %s: Chart generation returned None — text-only", sig.symbol)
+            except Exception as ce:
+                logger.warning("   [CHART] %s: Chart generation failed: %s — text-only", sig.symbol, ce)
+
             # Step 5: Run Gemini Technical Analysis
             try:
                 ta_result = analyze_technicals(
@@ -263,6 +286,7 @@ def run_technical_analysis(db: Session = None, signal_ids: list = None) -> dict:
                     candle_data=candle_data,
                     indicator_data=indicator_data,
                     sr_levels=sr_levels,
+                    chart_image_bytes=chart_image_bytes,
                 )
             except Exception as e:
                 logger.error("[TRIGGER] Agent 2.5 failed %s: %s", sig.symbol, e)
