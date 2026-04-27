@@ -273,8 +273,8 @@ def build_technical_context(
             "technical_confirmations": [],
         }
 
-    # Cap at 4 indicators as per contract
-    indicators_to_process = requested_indicators[:4]
+    # Cap at 12 indicators to support rich user defaults
+    indicators_to_process = requested_indicators[:12]
 
     indicator_values = {}
     technical_warnings = []

@@ -42,15 +42,15 @@ IST = timezone(timedelta(hours=5, minutes=30))
 # ═══════════════════════════════════════════════════════════════════════════════
 
 CHART_STYLE = {
-    "bg_color": "#1a1a2e",
-    "text_color": "#e0e0e0",
-    "grid_color": "#2a2a4a",
-    "candle_up": "#00e676",
-    "candle_down": "#ff1744",
-    "candle_up_edge": "#00c853",
-    "candle_down_edge": "#d50000",
-    "volume_up": "#00e67640",
-    "volume_down": "#ff174440",
+    "bg_color": "#12151c",
+    "text_color": "#d1d4dc",
+    "grid_color": "#2a2e39",
+    "candle_up": "#08d18d",      # Vibrant Groww Green
+    "candle_down": "#ff5252",    # Vibrant Groww Red
+    "candle_up_edge": "#08d18d",
+    "candle_down_edge": "#ff5252",
+    "volume_up": "#08d18d40",
+    "volume_down": "#ff525240",
     "ema_color": "#ffab00",
     "sma_color": "#2979ff",
     "vwap_color": "#e040fb",
@@ -58,14 +58,14 @@ CHART_STYLE = {
     "bb_lower": "#ff6f00",
     "bb_fill": "#ff6f0015",
     "rsi_line": "#00e5ff",
-    "rsi_ob": "#ff1744",
-    "rsi_os": "#00e676",
-    "rsi_fill_ob": "#ff174420",
-    "rsi_fill_os": "#00e67620",
+    "rsi_ob": "#ff5252",
+    "rsi_os": "#08d18d",
+    "rsi_fill_ob": "#ff525220",
+    "rsi_fill_os": "#08d18d20",
     "macd_line": "#00e5ff",
     "macd_signal": "#ff6f00",
-    "macd_hist_pos": "#00e67660",
-    "macd_hist_neg": "#ff174460",
+    "macd_hist_pos": "#08d18d60",
+    "macd_hist_neg": "#ff525260",
     "atr_line": "#b388ff",
     "ltp_line": "#ffffff",
     "entry_line": "#00e5ff",
@@ -98,7 +98,8 @@ def _fetch_candles_for_chart(symbol: str, interval: int, count: int = 60) -> lis
     if interval == 1440:
         start_ms = now_ms - int(86400 * count * 1.5 * 1000)
     else:
-        start_ms = now_ms - int(60 * count * 5 * 1000)
+        # Look back 5 days to ensure we hit the last trading session even over long weekends
+        start_ms = now_ms - int(86400 * 5 * 1000)
 
     chart_url = (
         f"https://groww.in/v1/api/charting_service/v2/chart/"
@@ -132,7 +133,7 @@ def _fetch_candles_for_chart(symbol: str, interval: int, count: int = 60) -> lis
     return []
 
 
-def _candles_to_dataframe(candles: list) -> pd.DataFrame:
+def _candles_to_dataframe(candles: list, interval: int = 1) -> pd.DataFrame:
     """Convert raw candle list to a pandas DataFrame with DatetimeIndex.
     
     Candle format: [timestamp_ms, open, high, low, close, volume]
@@ -155,6 +156,17 @@ def _candles_to_dataframe(candles: list) -> pd.DataFrame:
     df = pd.DataFrame(records)
     df.set_index("Date", inplace=True)
     df.sort_index(inplace=True)
+    
+    if interval == 1 and len(df) > 1:
+        # Groww 1-minute intraday charts return cumulative daily volume in c[5].
+        # We must differentiate it to get actual per-minute volume.
+        diff_vol = df["Volume"].diff()
+        # If difference is negative, it means a new day started, so keep the raw volume
+        df["Volume"] = np.where(diff_vol < 0, df["Volume"], diff_vol)
+        df["Volume"] = df["Volume"].fillna(df["Volume"].iloc[0])
+        # Prevent any negative volume just in case
+        df["Volume"] = df["Volume"].clip(lower=0)
+        
     return df
 
 
@@ -359,6 +371,38 @@ def _compute_indicators_for_chart(
                 series = pd.Series(vals, index=df.index, name=f"WMA({period})")
                 result["overlays"].append((f"WMA({period})", series, "#e040fb"))
 
+            elif name in ("DEMA",):
+                period = int(req.get("period", 20))
+                if use_talib:
+                    vals = talib.DEMA(closes, timeperiod=period)
+                else:
+                    vals = _np_ema(closes, period) # fallback to ema
+                series = pd.Series(vals, index=df.index, name=f"DEMA({period})")
+                result["overlays"].append((f"DEMA({period})", series, "#FF9800"))
+
+            elif name in ("TEMA",):
+                period = int(req.get("period", 20))
+                if use_talib:
+                    vals = talib.TEMA(closes, timeperiod=period)
+                else:
+                    vals = _np_ema(closes, period) # fallback to ema
+                series = pd.Series(vals, index=df.index, name=f"TEMA({period})")
+                result["overlays"].append((f"TEMA({period})", series, "#E91E63"))
+
+            elif name in ("VWAP",):
+                # Native VWAP Calculation
+                volumes = df["Volume"].values
+                typical_price = (highs + lows + closes) / 3
+                vwap_vals = np.cumsum(typical_price * volumes) / (np.cumsum(volumes) + 1e-9)
+                series = pd.Series(vwap_vals, index=df.index, name="VWAP")
+                result["overlays"].append(("VWAP", series, "#FFD700"))
+
+            elif name in ("SAR",):
+                if use_talib:
+                    vals = talib.SAR(highs, lows, acceleration=0.02, maximum=0.2)
+                    series = pd.Series(vals, index=df.index, name="SAR")
+                    result["overlays"].append(("SAR", series, "#00BCD4"))
+
             print(f"  [CHART]   {name}: computed OK")
 
         except Exception as e:
@@ -412,32 +456,64 @@ def generate_technical_chart(
     interval = 1440 if trade_mode.upper() == "DELIVERY" else 1
     tf_label = "Daily" if interval == 1440 else "1-Min"
 
-    # 2. Fetch candle data
-    candles = _fetch_candles_for_chart(symbol, interval, count=60)
+    # 2. Fetch candle data with extra 50 candles warmup for TA-Lib
+    warmup = 50
+    display_count = 60
+    candles = _fetch_candles_for_chart(symbol, interval, count=display_count + warmup)
     if not candles or len(candles) < 10:
         print(f"  [CHART] Not enough candle data for {symbol} (got {len(candles)})")
         return None
 
-    df = _candles_to_dataframe(candles)
+    full_df = _candles_to_dataframe(candles, interval)
 
-    # 3. Compute indicators
-    indicators = _compute_indicators_for_chart(df, requested_indicators)
+    # If LTP is not provided, use the last candle's close for visual consistency
+    if ltp is None and not full_df.empty:
+        ltp = float(full_df["Close"].iloc[-1])
+        
+    # 3. Compute on the FULL dataframe to warm up indicators (DEMA, EMA, etc.)
+    indicators = _compute_indicators_for_chart(full_df, requested_indicators)
 
-    # 4. Determine subplot layout
-    has_rsi = indicators["rsi"] is not None
-    has_macd = indicators["macd"] is not None
-    has_atr = indicators["atr"] is not None
-
-    n_subplots = 1 + int(has_rsi) + int(has_macd) + int(has_atr)
+    # Now strictly slice down to the final display_count (60) for rendering
+    df = full_df.iloc[-display_count:].copy()
     
-    # Height ratios: price panel gets most space, indicator panels are smaller
-    height_ratios = [4]  # Price panel
-    if has_rsi:
-        height_ratios.append(1.2)
-    if has_macd:
-        height_ratios.append(1.2)
-    if has_atr:
-        height_ratios.append(1.0)
+    # Slice all indicator Series down to the display frame
+    for i in range(len(indicators["overlays"])):
+        name, series, color = indicators["overlays"][i]
+        indicators["overlays"][i] = (name, series.loc[df.index], color)
+        
+    if indicators["rsi"] is not None:
+        indicators["rsi"] = indicators["rsi"].loc[df.index]
+        
+    if indicators["macd"] is not None:
+        macd, sig, hist = indicators["macd"]
+        indicators["macd"] = (macd.loc[df.index], sig.loc[df.index], hist.loc[df.index])
+        
+    if indicators["atr"] is not None:
+        indicators["atr"] = indicators["atr"].loc[df.index]
+
+    # 4. Determine subplot layout: We ALWAYS want 4 subplots as requested.
+    # Panel 0: Price & Trend
+    # Panel 1: Momentum (RSI or MACD)
+    # Panel 2: Volatility (ATR)
+    # Panel 3: Volume
+    
+    # Ensure we have something for Momentum and Volatility
+    if indicators["rsi"] is None and indicators["macd"] is None:
+        # Fallback calculate RSI
+        indicators["rsi"] = pd.Series(
+            talib.RSI(df["Close"].values, timeperiod=14) if talib else _np_rsi(df["Close"].values, 14),
+            index=df.index, name="RSI(14)"
+        )
+    if indicators["atr"] is None:
+        # Fallback calculate ATR
+        indicators["atr"] = pd.Series(
+            talib.ATR(df["High"].values, df["Low"].values, df["Close"].values, timeperiod=14) 
+            if talib else _np_atr(df["High"].values, df["Low"].values, df["Close"].values, 14),
+            index=df.index, name="ATR(14)"
+        )
+
+    n_subplots = 4
+    height_ratios = [3.5, 1.2, 1.2, 1.0]  # Price, Momentum, Volatility, Volume
 
     total_height = sum(height_ratios) * 1.8 + 1  # Scale factor
 
@@ -445,40 +521,80 @@ def generate_technical_chart(
     fig, axes = plt.subplots(
         n_subplots, 1,
         figsize=(CHART_WIDTH, total_height),
-        gridspec_kw={"height_ratios": height_ratios, "hspace": 0.08},
+        gridspec_kw={"height_ratios": height_ratios, "hspace": 0.5}, # further hspace for labels
         squeeze=False,
     )
     axes = axes.flatten()
+    
+    # Pre-calculate x-axis coordinates (0, 1, 2...) to avoid gaps in time
+    x_coords = np.arange(len(df))
+    
+    # Accurate Date Labels: Show Date only when day changes, else Time
+    date_labels = []
+    prev_date = None
+    day_breaks = []
+    for i, dt in enumerate(df.index):
+        curr_date = dt.date()
+        if prev_date is None or curr_date != prev_date:
+            date_labels.append(dt.strftime("%d %b"))
+            day_breaks.append(i)
+        else:
+            date_labels.append(dt.strftime("%H:%M"))
+        prev_date = curr_date
 
     fig.patch.set_facecolor(CHART_STYLE["bg_color"])
 
+    # Set overall title/description
+    fig.suptitle(
+        f"Technical Analysis Chart: {symbol} ({tf_label})\n"
+        "Price & Trend  |  Momentum  |  Volatility  |  Volume",
+        color=CHART_STYLE["text_color"], fontsize=16, fontweight="bold", y=0.96
+    )
+
     # ── PRICE PANEL (axes[0]) ──────────────────────────────────────────
     ax_price = axes[0]
-    _render_candlestick(ax_price, df)
-    _render_volume_bars(ax_price, df)
-    _render_overlays(ax_price, indicators["overlays"])
-    _render_suggested_levels(ax_price, df, entry_suggestion, stop_suggestion, target_suggestion)
+    overlay_names = [name for name, _, _ in indicators["overlays"]]
+    # Combine BB bands into a single label for cleaner title if present
+    if "BB Upper" in overlay_names:
+        overlay_names = [n for n in overlay_names if not n.startswith("BB ")] + ["BBANDS"]
+    
+    overlay_title = f" ({', '.join(overlay_names)})" if overlay_names else ""
+    desc_1 = " - Identifies trend direction and support/resistance levels"
+    ax_price.set_title(f"Chart 1: Price Action & Trend Indicators{overlay_title}{desc_1}", color=CHART_STYLE["text_color"], fontsize=10, loc="left", pad=5)
+    ax_price.set_ylabel("Price (INR)", fontsize=9, color=CHART_STYLE["text_color"])
+    _render_candlestick(ax_price, x_coords, df)
+    # Add Day Break Lines
+    for brk in day_breaks:
+        if brk > 0:
+            ax_price.axvline(x=brk - 0.5, color=CHART_STYLE["grid_color"], linestyle="--", alpha=0.5, linewidth=1)
+
+    _render_overlays(ax_price, x_coords, indicators["overlays"])
+    _render_suggested_levels(ax_price, x_coords, df, entry_suggestion, stop_suggestion, target_suggestion)
 
     # Annotate LTP (only if within visible range of candle data)
     if ltp and ltp > 0:
-        price_min = df["Low"].min()
-        price_max = df["High"].max()
+        price_min, price_max = df["Low"].min(), df["High"].max()
         price_range = price_max - price_min
-        # Only show LTP line if it's within 30% of the visible price range
         if price_min - price_range * 0.3 <= ltp <= price_max + price_range * 0.3:
             ax_price.axhline(
                 y=ltp, color=CHART_STYLE["ltp_line"], linewidth=0.8,
                 linestyle="--", alpha=0.7
             )
             ax_price.text(
-                df.index[-1], ltp, f"  LTP Rs.{ltp:.2f}",
-                color=CHART_STYLE["ltp_line"], fontsize=8, fontweight="bold",
+                x_coords[-1], ltp, f"  LTP Rs.{ltp:.2f}",
+                color=CHART_STYLE["ltp_line"], fontsize=9, fontweight="bold",
                 va="center",
             )
+    # Add headroom for the summary box (top right)
+    # Get current limits which already include the suggested level lines
+    ymin, ymax = ax_price.get_ylim()
+    yrange = ymax - ymin
+    # Add extra 20% at the top specifically for the summary box
+    ax_price.set_ylim(ymin - yrange * 0.05, ymax + yrange * 0.25)
 
     # Style price axis
     ax_price.set_facecolor(CHART_STYLE["bg_color"])
-    ax_price.tick_params(colors=CHART_STYLE["text_color"], labelsize=7)
+    ax_price.tick_params(colors=CHART_STYLE["text_color"], labelsize=8)
     ax_price.grid(True, color=CHART_STYLE["grid_color"], alpha=0.3, linewidth=0.5)
     ax_price.spines["top"].set_visible(False)
     ax_price.spines["right"].set_color(CHART_STYLE["grid_color"])
@@ -486,51 +602,76 @@ def generate_technical_chart(
     ax_price.spines["bottom"].set_color(CHART_STYLE["grid_color"])
 
     # Title
-    dir_label = f" | {direction}" if direction else ""
-    ax_price.set_title(
-        f"  {symbol}  •  {tf_label} Chart  •  {datetime.now(IST).strftime('%d %b %Y %H:%M IST')}{dir_label}",
-        fontsize=14, fontweight="bold", color=CHART_STYLE["text_color"],
-        loc="left", pad=20,
+    dir_label = f" | Bias: {direction}" if direction else ""
+    ax_price.text(
+        0.01, 0.95, f" {symbol} • {tf_label} {dir_label}",
+        transform=ax_price.transAxes,
+        fontsize=12, fontweight="bold", color=CHART_STYLE["text_color"],
+        va="top", ha="left",
+        bbox=dict(facecolor=CHART_STYLE["bg_color"], alpha=0.7, edgecolor='none')
     )
 
-    # Add Summary Stats Box (Top Right)
-    _render_summary_box(ax_price, df, indicators, ltp)
+    # Add Summary Stats Header (Top Left - Single Line to avoid overlap)
+    _render_summary_header(ax_price, df, indicators, ltp)
 
-    # Legend for overlays
+    # Legend for overlays - move to lower left
     if indicators["overlays"]:
         ax_price.legend(
-            loc="upper left", fontsize=7,
+            loc="lower left", fontsize=8,
             facecolor=CHART_STYLE["bg_color"],
             edgecolor=CHART_STYLE["grid_color"],
             labelcolor=CHART_STYLE["text_color"],
+            framealpha=0.6,
         )
 
     # ── INDICATOR SUBPLOTS ─────────────────────────────────────────────
-    subplot_idx = 1
-
-    if has_rsi:
-        _render_rsi(axes[subplot_idx], indicators["rsi"])
-        subplot_idx += 1
-
-    if has_macd:
-        macd_line, signal_line, hist = indicators["macd"]
-        _render_macd(axes[subplot_idx], macd_line, signal_line, hist)
-        subplot_idx += 1
-
-    if has_atr:
-        _render_atr(axes[subplot_idx], indicators["atr"])
-        subplot_idx += 1
-
-    # Format x-axis on the bottom-most panel
-    bottom_ax = axes[n_subplots - 1]
-    bottom_ax.tick_params(axis="x", colors=CHART_STYLE["text_color"], labelsize=8, rotation=30)
     
-    # Force more x-axis ticks to ensure time is visible
-    bottom_ax.xaxis.set_major_locator(mdates.AutoDateLocator(minticks=5, maxticks=12))
+    # Chart 2: Momentum
+    ax_mom = axes[1]
+    desc_2 = " - Shows overbought/oversold extremes and momentum strength"
+    if indicators["macd"] is not None:
+        ax_mom.set_title(f"Chart 2: Momentum Indicator (MACD){desc_2}", color=CHART_STYLE["text_color"], fontsize=10, loc="left", pad=5)
+        macd_line, signal_line, hist = indicators["macd"]
+        _render_macd(ax_mom, x_coords, macd_line, signal_line, hist)
+    else:
+        rsi_name = indicators["rsi"].name if indicators["rsi"] is not None else "RSI"
+        ax_mom.set_title(f"Chart 2: Momentum Indicator ({rsi_name}){desc_2}", color=CHART_STYLE["text_color"], fontsize=10, loc="left", pad=5)
+        _render_rsi(ax_mom, x_coords, indicators["rsi"])
 
-    # Hide x-tick labels on all panels except the bottom
-    for i in range(n_subplots - 1):
-        axes[i].tick_params(axis="x", labelbottom=False)
+    # Chart 3: Volatility
+    ax_volatility = axes[2]
+    atr_name = indicators["atr"].name if indicators["atr"] is not None else "ATR"
+    desc_3 = " - Measures price fluctuation to help size stop-losses properly"
+    ax_volatility.set_title(f"Chart 3: Volatility Indicator ({atr_name}){desc_3}", color=CHART_STYLE["text_color"], fontsize=10, loc="left", pad=5)
+    _render_atr(ax_volatility, x_coords, indicators["atr"])
+
+    # Chart 4: Volume
+    ax_vol = axes[3]
+    desc_4 = " - Confirms the strength of price movements and breakouts"
+    ax_vol.set_title(f"Chart 4: Volume Indicator{desc_4}", color=CHART_STYLE["text_color"], fontsize=10, loc="left", pad=5)
+    _render_standalone_volume(ax_vol, x_coords, df)
+
+    # Format x-axis: Show labels on ALL panels, use integer coordinates mapped to dates
+    for i, ax in enumerate(axes):
+        # Day break lines for all subplots
+        for brk in day_breaks:
+            if brk > 0:
+                ax.axvline(x=brk - 0.5, color=CHART_STYLE["grid_color"], linestyle="--", alpha=0.3, linewidth=0.8)
+                
+        # Smart Ticks: ensures we show the date at the start of each day
+        tick_indices = list(day_breaks)
+        if len(x_coords) > 10:
+            step = len(x_coords) // 6
+            tick_indices.extend(range(0, len(x_coords), step))
+        tick_indices = sorted(list(set(tick_indices)))
+        tick_indices = [idx for idx in tick_indices if idx < len(x_coords)]
+
+        ax.set_xticks(tick_indices)
+        ax.set_xticklabels([date_labels[idx] for idx in tick_indices], 
+                          rotation=0, ha="center", fontsize=8, color=CHART_STYLE["text_color"])
+        ax.tick_params(axis="x", colors=CHART_STYLE["text_color"], length=5)
+        ax.set_xlabel("Time (IST)", fontsize=9, color=CHART_STYLE["text_color"], fontweight="bold")
+
 
     # 6. Render to bytes
     buf = io.BytesIO()
@@ -555,19 +696,11 @@ def generate_technical_chart(
 # RENDERING HELPERS
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def _render_candlestick(ax, df: pd.DataFrame):
+def _render_candlestick(ax, x_coords: np.ndarray, df: pd.DataFrame):
     """Draw candlestick bodies and wicks on the given axes."""
-    # Convert datetime index to numeric for plotting
-    dates = mdates.date2num(df.index.to_pydatetime())
-    
-    # Auto-calculate candle width based on data density
-    if len(dates) > 1:
-        avg_gap = np.mean(np.diff(dates))
-        candle_width = avg_gap * 0.6
-    else:
-        candle_width = 0.0005
+    candle_width = 0.6
 
-    for i, (dt_num, row) in enumerate(zip(dates, df.itertuples())):
+    for i, (x, row) in enumerate(zip(x_coords, df.itertuples())):
         o, h, l, c = row.Open, row.High, row.Low, row.Close
 
         if c >= o:
@@ -578,90 +711,65 @@ def _render_candlestick(ax, df: pd.DataFrame):
             edge = CHART_STYLE["candle_down_edge"]
 
         # Wick (high-low line)
-        ax.plot([dt_num, dt_num], [l, h], color=edge, linewidth=0.8, zorder=2)
+        ax.plot([x, x], [l, h], color=edge, linewidth=0.5, zorder=2) # thinner wick
 
         # Body
         body_bottom = min(o, c)
-        body_height = abs(c - o) if abs(c - o) > 0 else h * 0.001
+        body_height = abs(c - o)
+        if body_height == 0:
+            body_height = h * 0.0005 # tiny visible body for doji
 
         ax.bar(
-            dt_num, body_height, bottom=body_bottom, width=candle_width,
-            color=color, edgecolor=edge, linewidth=0.5, zorder=3,
-            alpha=0.9,
+            x, body_height, bottom=body_bottom, width=candle_width,
+            color=color, edgecolor=edge, linewidth=0.4, zorder=3,
+            alpha=1.0, # solid vibrant colors
         )
 
-    ax.xaxis_date()
-    # Smart date formatting: detect daily vs intraday from actual data gaps
-    if len(dates) > 1:
-        avg_gap_hours = np.mean(np.diff(dates)) * 24  # gap in hours
-        if avg_gap_hours > 12:  # Daily candles (gap > 12 hours)
-            ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b"))
-        else:  # Intraday candles
-            # Show date if chart covers more than one day
-            if df.index[0].date() != df.index[-1].date():
-                ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b %H:%M"))
-            else:
-                ax.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M"))
-    else:
-        ax.xaxis.set_major_formatter(mdates.DateFormatter("%d %b %H:%M"))
 
-
-def _render_volume_bars(ax, df: pd.DataFrame):
-    """Render volume bars as a subtle overlay at the bottom of the price panel."""
+def _render_standalone_volume(ax, x_coords: np.ndarray, df: pd.DataFrame):
+    """Render volume bars on a standalone subplot."""
     if "Volume" not in df.columns or df["Volume"].sum() == 0:
         return
 
-    dates = mdates.date2num(df.index.to_pydatetime())
+    bar_width = 0.5
+    ax.set_facecolor(CHART_STYLE["bg_color"])
+
+    colors = [
+        CHART_STYLE["volume_up"] if row.Close >= row.Open else CHART_STYLE["volume_down"]
+        for row in df.itertuples()
+    ]
+
+    ax.bar(x_coords, df["Volume"].values, width=bar_width, color=colors, alpha=0.8, zorder=3)
     
-    if len(dates) > 1:
-        avg_gap = np.mean(np.diff(dates))
-        bar_width = avg_gap * 0.5
-    else:
-        bar_width = 0.0004
-
-    # Create a twin axis for volume
-    ax_vol = ax.twinx()
-
-    max_vol = df["Volume"].max() if df["Volume"].max() > 0 else 1
-    # Scale volume to occupy ~20% of the price panel height
-    price_range = df["High"].max() - df["Low"].min()
-    vol_scale = (price_range * 0.2) / max_vol
-
-    for dt_num, row in zip(dates, df.itertuples()):
-        color = CHART_STYLE["volume_up"] if row.Close >= row.Open else CHART_STYLE["volume_down"]
-        ax_vol.bar(
-            dt_num, row.Volume, width=bar_width,
-            color=color, alpha=0.4, zorder=1,
-        )
-
-    ax_vol.set_ylim(0, max_vol * 5)  # Push volume bars to bottom
-    ax_vol.set_yticks([])
-    ax_vol.set_yticklabels([])
-    for spine in ax_vol.spines.values():
-        spine.set_visible(False)
+    # Add a Volume Moving Average overlay
+    if len(df) >= 20:
+        vol_sma = df["Volume"].rolling(window=20).mean()
+        ax.plot(x_coords, vol_sma.values, color="#FF9800", linewidth=1.2, alpha=0.9, zorder=4, label="Vol SMA(20)")
+        # Small legend for the Volume SMA
+        ax.legend(loc="upper left", frameon=True, fontsize=7, 
+                  facecolor=CHART_STYLE["bg_color"], edgecolor=CHART_STYLE["grid_color"], labelcolor="white")
 
 
-def _render_overlays(ax, overlays: list):
+def _render_overlays(ax, x_coords: np.ndarray, overlays: list):
     """Render EMA, SMA, BBANDS etc. as line overlays on the price chart."""
     for name, series, color in overlays:
         valid = series.dropna()
         if len(valid) > 0:
-            dates = mdates.date2num(valid.index.to_pydatetime())
+            # Match coordinates
             ax.plot(
-                dates, valid.values,
+                x_coords[-len(series):], series.values,
                 color=color, linewidth=1.2, alpha=0.85,
                 label=name, zorder=4,
             )
 
 
-def _render_suggested_levels(ax, df, entry, stop, target):
+def _render_suggested_levels(ax, x_coords: np.ndarray, df: pd.DataFrame, entry, stop, target):
     """Plot horizontal lines for Entry, Stop Loss, and Target levels."""
     if not (entry or stop or target):
         return
 
-    x_min, x_max = ax.get_xlim()
     # Extend slightly to the right for labels
-    label_x = df.index[-1] + (df.index[-1] - df.index[0]) * 0.05
+    label_x = x_coords[-1] + len(x_coords) * 0.02
     
     levels = [
         (entry, "ENTRY", CHART_STYLE["entry_line"], "-"),
@@ -681,71 +789,62 @@ def _render_suggested_levels(ax, df, entry, stop, target):
             )
 
 
-def _render_summary_box(ax, df, indicators, ltp):
-    """Add a semi-transparent summary box with latest data points."""
-    latest = df.iloc[-1]
-    prev = df.iloc[-2] if len(df) > 1 else latest
+def _render_summary_header(ax, df, indicators, ltp):
+    """Render a single-line summary of OHLCV and indicators at the top of the chart."""
+    last = df.iloc[-1]
+    prev = df.iloc[-2] if len(df) > 1 else last
     
-    change = ((latest["Close"] - prev["Close"]) / prev["Close"]) * 100
-    change_color = CHART_STYLE["candle_up"] if change >= 0 else CHART_STYLE["candle_down"]
+    change = last["Close"] - prev["Close"]
+    pct_change = (change / prev["Close"]) * 100 if prev["Close"] != 0 else 0
     
-    # Build summary text
-    lines = [
-        f"LATEST CANDLE ({df.index[-1].strftime('%H:%M')})",
-        f"  O: {latest['Open']:.2f}  H: {latest['High']:.2f}",
-        f"  L: {latest['Low']:.2f}  C: {latest['Close']:.2f}",
-        f"  Change: {change:+.2f}%",
-        f"  Volume: {latest['Volume']:,}",
-        "",
-        "INDICATORS:",
-    ]
+    color = CHART_STYLE["candle_up"] if change >= 0 else CHART_STYLE["candle_down"]
+    sign = "+" if change >= 0 else ""
     
-    # Add indicator values
-    for name, series, color in indicators["overlays"]:
-        val = series.iloc[-1]
-        if not np.isnan(val):
-            lines.append(f"  {name}: {val:.2f}")
-            
-    if indicators["rsi"] is not None:
-        rsi_val = indicators["rsi"].iloc[-1]
-        if not np.isnan(rsi_val):
-            lines.append(f"  RSI: {rsi_val:.1f}")
-            
-    if indicators["macd"] is not None:
-        m, s, h = indicators["macd"]
-        m_val = m.iloc[-1]
-        if not np.isnan(m_val):
-            lines.append(f"  MACD: {m_val:.2f}")
-
-    summary_text = "\n".join(lines)
+    # 1. Price Header (Top Left)
+    price_str = (
+        f"O: {last['Open']:.2f}  H: {last['High']:.2f}  L: {last['Low']:.2f}  C: {last['Close']:.2f}  "
+        f"({sign}{pct_change:.2f}%)  V: {int(last['Volume']):,}"
+    )
     
-    # Position box in the top right (in axes coordinates)
     ax.text(
-        0.98, 0.96, summary_text,
+        0.01, 0.98, price_str,
         transform=ax.transAxes,
-        fontsize=9, color=CHART_STYLE["text_color"],
-        va="top", ha="right",
-        fontfamily="monospace",
-        bbox=dict(
-            boxstyle="round,pad=0.8",
-            facecolor="#000000",
-            edgecolor=CHART_STYLE["grid_color"],
-            alpha=0.7,
-        ),
+        fontsize=9, color=color,
+        va="top", ha="left",
+        fontweight="bold",
         zorder=10
     )
+    
+    # 2. Indicator Values (below price)
+    ind_parts = []
+    if indicators["rsi"] is not None:
+        ind_parts.append(f"RSI: {indicators['rsi'].iloc[-1]:.1f}")
+    if indicators["macd"] is not None:
+        macd_val, sig_val, hist_val = indicators["macd"]
+        ind_parts.append(f"MACD: {macd_val.iloc[-1]:.2f}")
+    
+    if ind_parts:
+        ax.text(
+            0.01, 0.93, " | ".join(ind_parts),
+            transform=ax.transAxes,
+            fontsize=8, color=CHART_STYLE["text_color"],
+            va="top", ha="left",
+            alpha=0.8,
+            zorder=10
+        )
 
 
-def _render_rsi(ax, rsi_series: pd.Series):
+def _render_rsi(ax, x_coords: np.ndarray, rsi_series: pd.Series):
     """Render RSI indicator subplot."""
     valid = rsi_series.dropna()
     if len(valid) == 0:
         return
 
-    dates = mdates.date2num(valid.index.to_pydatetime())
+    # Match coordinates
+    plot_x = x_coords[-len(rsi_series):]
     
     ax.set_facecolor(CHART_STYLE["bg_color"])
-    ax.plot(dates, valid.values, color=CHART_STYLE["rsi_line"], linewidth=1.2, zorder=3)
+    ax.plot(plot_x, rsi_series.values, color=CHART_STYLE["rsi_line"], linewidth=1.2, zorder=3)
 
     # Overbought / Oversold zones
     ax.axhline(70, color=CHART_STYLE["rsi_ob"], linewidth=0.7, linestyle="--", alpha=0.6)
@@ -754,13 +853,13 @@ def _render_rsi(ax, rsi_series: pd.Series):
 
     # Fill overbought/oversold regions
     ax.fill_between(
-        dates, valid.values, 70,
-        where=(valid.values > 70),
+        plot_x, rsi_series.values, 70,
+        where=(rsi_series.values > 70),
         color=CHART_STYLE["rsi_fill_ob"], alpha=0.5, interpolate=True, zorder=2,
     )
     ax.fill_between(
-        dates, valid.values, 30,
-        where=(valid.values < 30),
+        plot_x, rsi_series.values, 30,
+        where=(rsi_series.values < 30),
         color=CHART_STYLE["rsi_fill_os"], alpha=0.5, interpolate=True, zorder=2,
     )
 
@@ -774,50 +873,38 @@ def _render_rsi(ax, rsi_series: pd.Series):
     ax.spines["bottom"].set_color(CHART_STYLE["grid_color"])
 
     # Latest value annotation
-    latest_val = valid.values[-1]
-    label_color = CHART_STYLE["rsi_ob"] if latest_val > 70 else CHART_STYLE["rsi_os"] if latest_val < 30 else CHART_STYLE["rsi_line"]
-    ax.text(
-        dates[-1], latest_val, f"  {latest_val:.1f}",
-        color=label_color, fontsize=8, fontweight="bold", va="center",
-    )
-    ax.xaxis_date()
+    latest_val = rsi_series.values[-1]
+    if not np.isnan(latest_val):
+        label_color = CHART_STYLE["rsi_ob"] if latest_val > 70 else CHART_STYLE["rsi_os"] if latest_val < 30 else CHART_STYLE["rsi_line"]
+        ax.text(
+            plot_x[-1], latest_val, f"  {latest_val:.1f}",
+            color=label_color, fontsize=8, fontweight="bold", va="center",
+        )
 
 
-def _render_macd(ax, macd: pd.Series, signal: pd.Series, hist: pd.Series):
+def _render_macd(ax, x_coords: np.ndarray, macd: pd.Series, signal: pd.Series, hist: pd.Series):
     """Render MACD indicator subplot."""
-    valid_macd = macd.dropna()
-    valid_signal = signal.dropna()
-    valid_hist = hist.dropna()
-
-    if len(valid_macd) == 0:
+    if len(macd) == 0:
         return
 
+    # Match coordinates
+    plot_x = x_coords[-len(macd):]
+    
     ax.set_facecolor(CHART_STYLE["bg_color"])
 
     # Histogram bars
-    if len(valid_hist) > 0:
-        dates_h = mdates.date2num(valid_hist.index.to_pydatetime())
-        if len(dates_h) > 1:
-            bar_width = np.mean(np.diff(dates_h)) * 0.6
-        else:
-            bar_width = 0.0004
-
-        colors = [
-            CHART_STYLE["macd_hist_pos"] if v >= 0 else CHART_STYLE["macd_hist_neg"]
-            for v in valid_hist.values
-        ]
-        ax.bar(dates_h, valid_hist.values, width=bar_width, color=colors, zorder=1)
+    bar_width = 0.6
+    colors = [
+        CHART_STYLE["macd_hist_pos"] if v >= 0 else CHART_STYLE["macd_hist_neg"]
+        for v in hist.values
+    ]
+    ax.bar(plot_x, hist.values, width=bar_width, color=colors, zorder=1)
 
     # MACD and Signal lines
-    dates_m = mdates.date2num(valid_macd.index.to_pydatetime())
-    ax.plot(dates_m, valid_macd.values, color=CHART_STYLE["macd_line"], linewidth=1.2, label="MACD", zorder=3)
-
-    if len(valid_signal) > 0:
-        dates_s = mdates.date2num(valid_signal.index.to_pydatetime())
-        ax.plot(dates_s, valid_signal.values, color=CHART_STYLE["macd_signal"], linewidth=1.0, label="Signal", zorder=3)
+    ax.plot(plot_x, macd.values, color=CHART_STYLE["macd_line"], linewidth=1.2, label="MACD", zorder=3)
+    ax.plot(plot_x, signal.values, color=CHART_STYLE["macd_signal"], linewidth=1.0, label="Signal", zorder=3)
 
     ax.axhline(0, color=CHART_STYLE["text_color"], linewidth=0.5, linestyle=":", alpha=0.3)
-
     ax.set_ylabel("MACD", fontsize=8, color=CHART_STYLE["text_color"])
     ax.tick_params(colors=CHART_STYLE["text_color"], labelsize=7)
     ax.grid(True, color=CHART_STYLE["grid_color"], alpha=0.3, linewidth=0.5)
@@ -831,20 +918,19 @@ def _render_macd(ax, macd: pd.Series, signal: pd.Series, hist: pd.Series):
     ax.spines["right"].set_color(CHART_STYLE["grid_color"])
     ax.spines["left"].set_color(CHART_STYLE["grid_color"])
     ax.spines["bottom"].set_color(CHART_STYLE["grid_color"])
-    ax.xaxis_date()
 
 
-def _render_atr(ax, atr_series: pd.Series):
+def _render_atr(ax, x_coords: np.ndarray, atr_series: pd.Series):
     """Render ATR indicator subplot."""
-    valid = atr_series.dropna()
-    if len(valid) == 0:
+    if len(atr_series) == 0:
         return
 
-    dates = mdates.date2num(valid.index.to_pydatetime())
+    # Match coordinates
+    plot_x = x_coords[-len(atr_series):]
 
     ax.set_facecolor(CHART_STYLE["bg_color"])
-    ax.fill_between(dates, 0, valid.values, color=CHART_STYLE["atr_line"], alpha=0.2, zorder=1)
-    ax.plot(dates, valid.values, color=CHART_STYLE["atr_line"], linewidth=1.2, zorder=3)
+    ax.fill_between(plot_x, 0, atr_series.values, color=CHART_STYLE["atr_line"], alpha=0.2, zorder=1)
+    ax.plot(plot_x, atr_series.values, color=CHART_STYLE["atr_line"], linewidth=1.2, zorder=3)
 
     ax.set_ylabel("ATR", fontsize=8, color=CHART_STYLE["text_color"])
     ax.tick_params(colors=CHART_STYLE["text_color"], labelsize=7)
@@ -855,9 +941,9 @@ def _render_atr(ax, atr_series: pd.Series):
     ax.spines["bottom"].set_color(CHART_STYLE["grid_color"])
 
     # Latest value
-    latest_val = valid.values[-1]
-    ax.text(
-        dates[-1], latest_val, f"  {latest_val:.2f}",
-        color=CHART_STYLE["atr_line"], fontsize=8, fontweight="bold", va="center",
-    )
-    ax.xaxis_date()
+    latest_val = atr_series.values[-1]
+    if not np.isnan(latest_val):
+        ax.text(
+            plot_x[-1], latest_val, f"  {latest_val:.2f}",
+            color=CHART_STYLE["atr_line"], fontsize=8, fontweight="bold", va="center",
+        )
