@@ -1,9 +1,8 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import { msToDate, formatTimestamp } from "@/types/trading";
 import type { ProcessingState, SystemConfig } from "@/types/trading";
-import { Activity, Globe, RefreshCw } from "lucide-react";
+import { Activity, Wifi, WifiOff, Clock, Database, Cpu } from "lucide-react";
 
 interface SystemHealthPanelProps {
   processingState: ProcessingState | null | undefined;
@@ -17,14 +16,14 @@ function StatusDot({
   pulse = false,
 }: { active: boolean; pulse?: boolean }) {
   return (
-    <span className="relative flex h-2 w-2 shrink-0">
+    <span className="relative flex h-2.5 w-2.5 shrink-0">
       {pulse && active && (
-        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-chart-1 opacity-60" />
+        <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-60" />
       )}
       <span
         className={cn(
-          "relative inline-flex rounded-full h-2 w-2",
-          active ? "bg-chart-1" : "bg-muted-foreground opacity-40",
+          "relative inline-flex rounded-full h-2.5 w-2.5",
+          active ? "bg-emerald-400" : "bg-muted-foreground/30",
         )}
       />
     </span>
@@ -34,23 +33,25 @@ function StatusDot({
 function InfoRow({
   label,
   value,
-  mono = true,
+  icon: Icon,
   highlight = false,
 }: {
   label: string;
   value: string;
-  mono?: boolean;
+  icon?: React.ElementType;
   highlight?: boolean;
 }) {
   return (
-    <div className="flex items-center justify-between gap-3 py-1 border-b border-border/30 last:border-0">
-      <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest shrink-0">
-        {label}
-      </span>
+    <div className="flex items-center justify-between gap-3 py-2 border-b border-border/30 last:border-0">
+      <div className="flex items-center gap-2">
+        {Icon && <Icon size={13} className="text-muted-foreground/50" />}
+        <span className="text-[12px] text-muted-foreground">
+          {label}
+        </span>
+      </div>
       <span
         className={cn(
-          "text-[11px] text-right truncate max-w-[160px]",
-          mono ? "font-mono" : "font-medium",
+          "text-[12px] font-medium text-right truncate max-w-[160px] font-mono",
           highlight ? "text-primary" : "text-foreground",
         )}
         title={value}
@@ -68,7 +69,6 @@ export function SystemHealthPanel({
   isFetching = false,
 }: SystemHealthPanelProps) {
   const isPolling = processingState?.is_polling_active ?? false;
-  const isLive = true;
 
   const lastPollTs = processingState?.last_poll_timestamp ?? 0;
   const lastPollStr = lastPollTs > 0 ? formatTimestamp(lastPollTs) : "—";
@@ -89,11 +89,11 @@ export function SystemHealthPanel({
   return (
     <div className="space-y-3" data-ocid="system_health_panel">
       {/* Endpoint status section */}
-      <div className="bg-card border border-border rounded p-3 space-y-2.5">
+      <div className="bg-card border border-border rounded-xl p-4 space-y-3">
         <div className="flex items-center justify-between">
-          <div className="flex items-center gap-1.5">
-            <Activity size={10} className="text-muted-foreground" />
-            <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest">
+          <div className="flex items-center gap-2">
+            <Activity size={14} className="text-muted-foreground" />
+            <span className="text-[12px] font-semibold text-foreground">
               System Health
             </span>
           </div>
@@ -101,17 +101,13 @@ export function SystemHealthPanel({
           <Badge
             variant="outline"
             className={cn(
-              "font-mono text-[9px] px-1.5 py-0 h-4 uppercase",
-              isLive
-                ? "border-chart-1/40 text-chart-1 bg-chart-1/10"
-                : "border-chart-4/40 text-chart-4 bg-chart-4/10",
+              "text-[10px] font-mono font-semibold px-2.5 py-0.5 rounded-full uppercase tracking-wider",
+              "border-emerald-500/40 text-emerald-400 bg-emerald-500/10",
             )}
             data-ocid="system_health_panel.endpoint_status"
           >
-            <StatusDot active={isLive} />
-            <span className="ml-1">
-              LIVE ENDPOINT
-            </span>
+            <StatusDot active={true} />
+            <span className="ml-1.5">Connected</span>
           </Badge>
         </div>
 
@@ -121,38 +117,50 @@ export function SystemHealthPanel({
             value={
               lastPollTs > 0 ? `${lastPollDate} ${lastPollStr} UTC` : "Never"
             }
+            icon={Clock}
           />
           <InfoRow
             label="Queue"
             value={`${queue} articles`}
+            icon={Database}
             highlight={queue > 0}
           />
           <InfoRow
             label="Processed"
             value={`${totalProcessed.toLocaleString()} total`}
+            icon={Cpu}
           />
           <InfoRow label="Mode" value={processingState?.current_mode ?? "—"} />
         </div>
 
         {/* Polling indicator */}
-        <div className="flex items-center gap-2 pt-1">
+        <div className={cn(
+          "flex items-center gap-2.5 p-2.5 rounded-lg border transition-all",
+          isPolling
+            ? "bg-emerald-500/5 border-emerald-500/20"
+            : "bg-secondary/30 border-border/50",
+        )}>
           <StatusDot active={isPolling} pulse />
+          {isPolling ? (
+            <Wifi size={14} className="text-emerald-400" />
+          ) : (
+            <WifiOff size={14} className="text-muted-foreground/50" />
+          )}
           <span
             className={cn(
-              "font-mono text-[10px] uppercase tracking-wider",
-              isPolling ? "text-chart-1" : "text-muted-foreground opacity-50",
+              "text-[12px] font-medium",
+              isPolling ? "text-emerald-400" : "text-muted-foreground/60",
             )}
           >
-            {isPolling ? "Polling Active" : "Polling Inactive"}
+            {isPolling ? "Auto-Polling Active" : "Polling Inactive"}
           </span>
           {isPolling && config && (
-            <span className="font-mono text-[9px] text-muted-foreground ml-auto opacity-60">
+            <span className="font-mono text-[11px] text-muted-foreground ml-auto">
               every {config.polling_interval_mins}m
             </span>
           )}
         </div>
       </div>
-
     </div>
   );
 }

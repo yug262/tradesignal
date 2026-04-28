@@ -7,15 +7,19 @@ import { AppSidebar } from "./AppSidebar";
 
 const ROUTE_TITLES: Record<string, string> = {
   "/": "Dashboard",
-  "/opportunities": "Live Trade Opportunities",
-  "/agent-signals": "Pre-Market Trade Signals",
-  "/news-feed": "News-to-Trade Feed",
-  "/live-news": "Live News Agent",
+  "/opportunities": "Live Opportunities",
+  "/agent-signals": "Agent 1 — News Discovery",
+  "/market-open": "Agent 2 — Market Open Validation",
+  "/technical-analysis": "Agent 2.5 — Technical Analysis",
+  "/execution-planner": "Agent 3 — Execution Planner",
+  "/news-feed": "News Feed",
+  "/grouping": "Stock Grouping",
+  "/paper-trading": "Paper Trading",
   "/mode-analysis": "Mode Analysis",
   "/trade-planner": "Trade Planner",
-  "/journal": "Journal / History",
+  "/journal": "Journal & History",
   "/market-regime": "Market Regime",
-  "/settings": "Settings & Risk Config",
+  "/settings": "Settings",
 };
 
 function getPageTitle(pathname: string): string {
@@ -57,23 +61,6 @@ export function Layout({ children }: LayoutProps) {
         >
           {children}
         </main>
-
-        {/* Branding footer */}
-        <footer className="shrink-0 flex items-center justify-end px-4 py-1.5 bg-card border-t border-border">
-          <span className="font-mono text-[10px] text-muted-foreground opacity-40">
-            © {new Date().getFullYear()}. Built with love using{" "}
-            <a
-              href={`https://caffeine.ai?utm_source=caffeine-footer&utm_medium=referral&utm_content=${encodeURIComponent(
-                typeof window !== "undefined" ? window.location.hostname : "",
-              )}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="hover:text-muted-foreground transition-colors"
-            >
-              caffeine.ai
-            </a>
-          </span>
-        </footer>
       </div>
     </div>
   );

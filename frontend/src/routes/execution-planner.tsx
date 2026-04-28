@@ -135,87 +135,85 @@ function ExecutionPlannerPage() {
   };
 
   return (
-    <div className="p-5 space-y-5" data-ocid="execution-planner.page">
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto" data-ocid="execution-planner.page">
       {/* Header Bar */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <Navigation size={16} className="text-indigo-400" />
-          <span className="font-mono text-[12px] font-bold text-foreground uppercase tracking-widest">
-            Agent 3: Execution Planner
-          </span>
-          <Badge variant="outline" className="font-mono text-[9px] px-1.5 py-0 h-4 border-indigo-500/30 text-indigo-400 bg-indigo-500/5 ml-2">
-            LIVE ENTRY
-          </Badge>
+      <div className="flex items-center justify-between flex-wrap gap-4 animate-fade-up">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-indigo-500/15 text-indigo-400">
+              <Navigation size={20} />
+            </div>
+            <div>
+              <h2 className="font-display text-xl font-bold text-foreground tracking-tight">
+                Execution Planner
+              </h2>
+              <p className="text-[12px] text-muted-foreground">
+                Agent 3 formulates precise entry, stop-loss & target plans using live intraday structure
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {status && (
-            <Badge variant="outline" className="font-mono text-[9px] px-2 py-0.5 border-border text-muted-foreground">
-              <Clock size={8} className="mr-1" />
-              Last Run: {status.last_run_time || "Never"}
+            <Badge variant="outline" className="text-[11px] px-3 py-1 border-border text-muted-foreground rounded-full">
+              <Clock size={11} className="mr-1.5" />
+              Last: {status.last_run_time || "Never"}
             </Badge>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={loadSignals}
-            disabled={loading}
-            className="font-mono text-[10px] h-6 border-border"
-          >
-            <RefreshCw size={10} className={`mr-1 ${loading ? "animate-spin" : ""}`} />
+          <Button variant="outline" size="sm" onClick={loadSignals} disabled={loading}
+            className="text-[12px] h-8 border-border rounded-lg">
+            <RefreshCw size={13} className={cn("mr-1.5", loading && "animate-spin")} />
             Refresh
           </Button>
-          <Button
-            size="sm"
-            onClick={triggerExec}
-            disabled={runningExec}
-            className="font-mono text-[10px] h-6 bg-indigo-600 text-white hover:bg-indigo-700 shadow-[0_0_15px_rgba(79,70,229,0.3)]"
-          >
+          <Button size="sm" onClick={triggerExec} disabled={runningExec}
+            className="text-[12px] h-8 bg-indigo-600 text-white hover:bg-indigo-700 rounded-lg shadow-[0_0_15px_rgba(79,70,229,0.2)]">
             {runningExec ? (
-              <><RefreshCw size={10} className="mr-1 animate-spin" /> Planning...</>
+              <><RefreshCw size={13} className="mr-1.5 animate-spin" /> Planning...</>
             ) : (
-              <><Crosshair size={10} className="mr-1" /> Run Execution Planner</>
+              <><Crosshair size={13} className="mr-1.5" /> Run Planner</>
             )}
           </Button>
         </div>
       </div>
 
-      <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-lg p-4 mb-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          <strong>How it works:</strong> Agent 3 takes trades validated by Agent 2 and analyzes live intraday structure (VWAP, price extensions) to formulate precise entry, stoploss, and target plans. It prevents chasing extended moves and optimizes risk-reward.
+      <div className="bg-indigo-500/5 border border-indigo-500/20 rounded-xl p-4 flex items-start gap-3 animate-fade-up stagger-1">
+        <Crosshair size={16} className="text-indigo-400 mt-0.5 shrink-0" />
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          <strong className="text-foreground">How it works:</strong> Agent 3 analyzes live intraday structure (VWAP, price extensions) to formulate precise entry, stop-loss, and target plans. It prevents chasing extended moves and optimizes risk-reward.
         </p>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-3 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-3 gap-3 animate-fade-up stagger-2">
         {[
-          { label: "PENDING", count: eStatus.pending, icon: <Clock size={16} />, color: "text-blue-400", bg: "bg-blue-500/5 border-blue-500/20" },
-          { label: "PLANNED", count: eStatus.planned, icon: <Crosshair size={16} />, color: "text-emerald-400", bg: "bg-emerald-500/5 border-emerald-500/20" },
-          { label: "SKIPPED", count: totalSkipped, icon: <Ban size={16} />, color: "text-red-400", bg: "bg-red-500/5 border-red-500/20" },
+          { label: "Pending", count: eStatus.pending, icon: <Clock size={18} />, color: "text-blue-400", bg: "bg-blue-500/5 border-blue-500/20 hover:bg-blue-500/10" },
+          { label: "Planned", count: eStatus.planned, icon: <Crosshair size={18} />, color: "text-emerald-400", bg: "bg-emerald-500/5 border-emerald-500/20 hover:bg-emerald-500/10" },
+          { label: "Skipped", count: totalSkipped, icon: <Ban size={18} />, color: "text-red-400", bg: "bg-red-500/5 border-red-500/20 hover:bg-red-500/10" },
         ].map((item) => (
           <div
             key={item.label}
-            className={cn("border rounded-lg p-3 flex items-center gap-3 cursor-pointer transition-all hover:scale-[1.02]", item.bg)}
-            onClick={() => setExecFilter(execFilter === item.label ? "ALL" : item.label)}
+            className={cn("border rounded-xl p-4 flex items-center gap-3 cursor-pointer transition-all duration-200 hover:scale-[1.02]", item.bg)}
+            onClick={() => setExecFilter(execFilter === item.label.toUpperCase() ? "ALL" : item.label.toUpperCase())}
           >
             <div className={item.color}>{item.icon}</div>
             <div>
-              <div className={cn("text-xl font-bold font-mono tabular-nums", item.color)}>{item.count}</div>
-              <div className="font-mono text-[8px] text-muted-foreground uppercase tracking-widest">{item.label}</div>
+              <div className={cn("text-2xl font-bold font-mono tabular-nums", item.color)}>{item.count}</div>
+              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{item.label}</div>
             </div>
           </div>
         ))}
       </div>
 
       {/* Filters */}
-      <div className="flex items-center justify-between flex-wrap">
+      <div className="flex items-center justify-between flex-wrap gap-2 animate-fade-up stagger-3">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest mr-1">Status:</span>
+          <span className="text-[12px] text-muted-foreground mr-1">Status:</span>
           {["ALL", "PENDING", "PLANNED", "SKIPPED"].map((s) => (
             <Badge
               key={s}
               variant="outline"
               className={cn(
-                "font-mono text-[9px] px-2 py-0.5 cursor-pointer transition-all",
+                "text-[11px] px-3 py-1 cursor-pointer transition-all rounded-full",
                 execFilter === s
                   ? "bg-primary/10 border-primary/30 text-primary"
                   : "border-border text-muted-foreground hover:border-primary/30"
@@ -227,7 +225,7 @@ function ExecutionPlannerPage() {
           ))}
         </div>
 
-        <span className="font-mono text-[9px] text-muted-foreground">
+        <span className="text-[12px] text-muted-foreground">
           Showing {filtered.length} of {executionSignals.length} candidates
         </span>
       </div>
@@ -236,7 +234,7 @@ function ExecutionPlannerPage() {
       {loading ? (
         <div className="space-y-3">
           {[1, 2].map((i) => (
-            <div key={i} className="bg-card border border-border rounded-lg p-5 space-y-3">
+            <div key={i} className="bg-card border border-border rounded-xl p-5 space-y-3">
               <div className="flex justify-between">
                 <Skeleton className="h-6 w-32" />
                 <Skeleton className="h-5 w-20" />
@@ -246,12 +244,16 @@ function ExecutionPlannerPage() {
           ))}
         </div>
       ) : filtered.length === 0 ? (
-        <div className="bg-card border border-border rounded-lg p-12 text-center space-y-3">
-          <Navigation size={32} className="mx-auto text-muted-foreground opacity-20" />
-          <p className="font-mono text-xs text-muted-foreground">No valid trades ready for execution</p>
-          <p className="font-mono text-[10px] text-muted-foreground opacity-50">
-            Agent 2 must confirm edges before Agent 3 can plan execution.
-          </p>
+        <div className="bg-card border border-border rounded-xl p-16 text-center space-y-4 animate-fade-up">
+          <div className="flex items-center justify-center w-16 h-16 rounded-2xl bg-secondary mx-auto">
+            <Navigation size={28} className="text-muted-foreground/30" />
+          </div>
+          <div>
+            <p className="text-sm font-medium text-foreground">No valid trades ready for execution</p>
+            <p className="text-xs text-muted-foreground mt-1">
+              Agent 2 must confirm edges before Agent 3 can plan execution.
+            </p>
+          </div>
         </div>
       ) : (
         <div className="space-y-3">
@@ -623,10 +625,6 @@ function ExecutionPlannerPage() {
         </div>
       )}
 
-      {/* Footer */}
-      <div className="font-mono text-[9px] text-muted-foreground opacity-25 text-center tracking-widest pb-1 border-t border-border/20 pt-3 mt-6">
-        -- AGENT 3 . LIVE EXECUTION . ENTRY PLANNING --
-      </div>
     </div>
   );
 }

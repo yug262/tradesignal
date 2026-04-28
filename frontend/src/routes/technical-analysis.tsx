@@ -105,88 +105,86 @@ function TechnicalAnalysisPage() {
   };
 
   return (
-    <div className="p-5 space-y-5" data-ocid="technical-analysis.page">
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto" data-ocid="technical-analysis.page">
       {/* Header Bar */}
-      <div className="flex items-center justify-between flex-wrap gap-3">
-        <div className="flex items-center gap-2">
-          <LineChart size={16} className="text-cyan-500" />
-          <span className="font-mono text-[12px] font-bold text-foreground uppercase tracking-widest">
-            Agent 2.5: Technical Analysis
-          </span>
-          <Badge variant="outline" className="font-mono text-[9px] px-1.5 py-0 h-4 border-cyan-500/30 text-cyan-400 bg-cyan-500/5 ml-2">
-            INDICATORS & OHLCV
-          </Badge>
+      <div className="flex items-center justify-between flex-wrap gap-4 animate-fade-up">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-cyan-500/15 text-cyan-400">
+              <LineChart size={20} />
+            </div>
+            <div>
+              <h2 className="font-display text-xl font-bold text-foreground tracking-tight">
+                Technical Analysis
+              </h2>
+              <p className="text-[12px] text-muted-foreground">
+                Agent 2.5 evaluates confirmed signals with TA-Lib indicators — only GO setups advance to Agent 3
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-2">
           {status && (
-            <Badge variant="outline" className="font-mono text-[9px] px-2 py-0.5 border-border text-muted-foreground">
-              <Clock size={8} className="mr-1" />
-              Last Run: {status.last_run_time || "Never"}
+            <Badge variant="outline" className="text-[11px] px-3 py-1 border-border text-muted-foreground rounded-full">
+              <Clock size={11} className="mr-1.5" />
+              Last: {status.last_run_time || "Never"}
             </Badge>
           )}
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={loadSignals}
-            disabled={loading}
-            className="font-mono text-[10px] h-6 border-border"
-          >
-            <RefreshCw size={10} className={`mr-1 ${loading ? "animate-spin" : ""}`} />
+          <Button variant="outline" size="sm" onClick={loadSignals} disabled={loading}
+            className="text-[12px] h-8 border-border rounded-lg">
+            <RefreshCw size={13} className={cn("mr-1.5", loading && "animate-spin")} />
             Refresh
           </Button>
-          <Button
-            size="sm"
-            onClick={triggerTA}
-            disabled={runningTA}
-            className="font-mono text-[10px] h-6 bg-cyan-600 text-white hover:bg-cyan-700 shadow-[0_0_15px_rgba(6,182,212,0.3)]"
-          >
+          <Button size="sm" onClick={triggerTA} disabled={runningTA}
+            className="text-[12px] h-8 bg-cyan-600 text-white hover:bg-cyan-700 rounded-lg shadow-[0_0_15px_rgba(6,182,212,0.2)]">
             {runningTA ? (
-              <><RefreshCw size={10} className="mr-1 animate-spin" /> Analyzing...</>
+              <><RefreshCw size={13} className="mr-1.5 animate-spin" /> Analyzing...</>
             ) : (
-              <><BarChart2 size={10} className="mr-1" /> Run Technical Analysis</>
+              <><BarChart2 size={13} className="mr-1.5" /> Run Analysis</>
             )}
           </Button>
         </div>
       </div>
 
-      <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-lg p-4 mb-4">
-        <p className="text-xs text-muted-foreground leading-relaxed">
-          <strong>How it works:</strong> Agent 2.5 receives structurally confirmed signals from Agent 2, builds real-time TA-Lib indicators, and evaluates the exact setup. It acts as a strict gating layer: only setups marked as <strong className="text-emerald-400">GO</strong> are passed to Agent 3 for execution sizing.
+      <div className="bg-cyan-500/5 border border-cyan-500/20 rounded-xl p-4 flex items-start gap-3 animate-fade-up stagger-1">
+        <BarChart2 size={16} className="text-cyan-400 mt-0.5 shrink-0" />
+        <p className="text-sm text-muted-foreground leading-relaxed">
+          <strong className="text-foreground">How it works:</strong> Agent 2.5 builds real-time TA-Lib indicators and evaluates each setup. It acts as a strict gating layer: only setups marked as <strong className="text-emerald-400">GO</strong> are passed to Agent 3 for execution.
         </p>
       </div>
 
       {/* Summary Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 animate-fade-up stagger-2">
         {[
-          { label: "PENDING", count: pendingCount, icon: <Clock size={16} />, color: "text-blue-400", bg: "bg-blue-500/5 border-blue-500/20" },
-          { label: "ANALYZED", count: analyzedCount, icon: <Activity size={16} />, color: "text-cyan-400", bg: "bg-cyan-500/5 border-cyan-500/20" },
-          { label: "HANDOFF: GO", count: goCount, icon: <CheckCircle2 size={16} />, color: "text-emerald-400", bg: "bg-emerald-500/5 border-emerald-500/20" },
-          { label: "HANDOFF: WAIT", count: analyzedCount - goCount, icon: <Minus size={16} />, color: "text-amber-400", bg: "bg-amber-500/5 border-amber-500/20" },
+          { label: "Pending", count: pendingCount, icon: <Clock size={18} />, color: "text-blue-400", bg: "bg-blue-500/5 border-blue-500/20 hover:bg-blue-500/10" },
+          { label: "Analyzed", count: analyzedCount, icon: <Activity size={18} />, color: "text-cyan-400", bg: "bg-cyan-500/5 border-cyan-500/20 hover:bg-cyan-500/10" },
+          { label: "GO", count: goCount, icon: <CheckCircle2 size={18} />, color: "text-emerald-400", bg: "bg-emerald-500/5 border-emerald-500/20 hover:bg-emerald-500/10" },
+          { label: "Wait", count: analyzedCount - goCount, icon: <Minus size={18} />, color: "text-amber-400", bg: "bg-amber-500/5 border-amber-500/20 hover:bg-amber-500/10" },
         ].map((item) => (
           <div
             key={item.label}
-            className={cn("border rounded-lg p-3 flex items-center gap-3 cursor-pointer transition-all hover:scale-[1.02]", item.bg)}
-            onClick={() => setFilter(filter === item.label.split(': ')[1] || filter === item.label ? "ALL" : (item.label.split(': ')[1] || item.label))}
+            className={cn("border rounded-xl p-4 flex items-center gap-3 cursor-pointer transition-all duration-200 hover:scale-[1.02]", item.bg)}
+            onClick={() => setFilter(filter === item.label.toUpperCase() ? "ALL" : item.label.toUpperCase())}
           >
             <div className={item.color}>{item.icon}</div>
             <div>
-              <div className={cn("text-xl font-bold font-mono tabular-nums", item.color)}>{item.count}</div>
-              <div className="font-mono text-[8px] text-muted-foreground uppercase tracking-widest">{item.label}</div>
+              <div className={cn("text-2xl font-bold font-mono tabular-nums", item.color)}>{item.count}</div>
+              <div className="text-[11px] font-medium text-muted-foreground uppercase tracking-wider">{item.label}</div>
             </div>
           </div>
         ))}
       </div>
 
       {/* Filters */}
-      <div className="flex items-center justify-between flex-wrap">
+      <div className="flex items-center justify-between flex-wrap gap-2 animate-fade-up stagger-3">
         <div className="flex items-center gap-2">
-          <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest mr-1">Status:</span>
+          <span className="text-[12px] text-muted-foreground mr-1">Status:</span>
           {["ALL", "PENDING", "ANALYZED", "GO", "WAIT/NO_GO"].map((s) => (
             <Badge
               key={s}
               variant="outline"
               className={cn(
-                "font-mono text-[9px] px-2 py-0.5 cursor-pointer transition-all",
+                "text-[11px] px-3 py-1 cursor-pointer transition-all rounded-full",
                 filter === s
                   ? "bg-primary/10 border-primary/30 text-primary"
                   : "border-border text-muted-foreground hover:border-primary/30"
@@ -198,7 +196,7 @@ function TechnicalAnalysisPage() {
           ))}
         </div>
 
-        <span className="font-mono text-[9px] text-muted-foreground">
+        <span className="text-[12px] text-muted-foreground">
           Showing {filtered.length} of {taSignals.length} signals
         </span>
       </div>
@@ -451,10 +449,6 @@ function TechnicalAnalysisPage() {
         </div>
       )}
 
-      {/* Footer */}
-      <div className="font-mono text-[9px] text-muted-foreground opacity-25 text-center tracking-widest pb-1 border-t border-border/20 pt-3 mt-6">
-        -- AGENT 2.5 . TECHNICAL ANALYSIS . INDICATOR VALIDATION --
-      </div>
     </div>
   );
 }

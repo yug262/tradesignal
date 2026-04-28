@@ -5,18 +5,18 @@ import { useUIStore } from "@/stores/uiStore";
 import { Link, useRouterState } from "@tanstack/react-router";
 import {
   BarChart3,
-  BookOpen,
   Brain,
   ChevronLeft,
   ChevronRight,
   ClipboardList,
-  Globe,
   LayoutDashboard,
   LayoutGrid,
+  LineChart,
   Newspaper,
   Settings,
-  Terminal,
   TrendingUp,
+  Activity,
+  Wallet,
   Zap,
 } from "lucide-react";
 
@@ -24,51 +24,90 @@ interface NavItem {
   path: string;
   label: string;
   icon: React.ReactNode;
-  phase?: number;
+  badge?: string;
+  badgeColor?: string;
+  disabled?: boolean;
 }
 
-const NAV_ITEMS: NavItem[] = [
-  { path: "/", label: "Dashboard", icon: <LayoutDashboard size={16} /> },
+interface NavSection {
+  title: string;
+  items: NavItem[];
+}
+
+const NAV_SECTIONS: NavSection[] = [
   {
-    path: "/agent-signals",
-    label: "Trade Signal (A1)",
-    icon: <Brain size={16} />,
+    title: "Overview",
+    items: [
+      { path: "/", label: "Dashboard", icon: <LayoutDashboard size={18} /> },
+    ],
   },
   {
-    path: "/market-open",
-    label: "Market Open (A2)",
-    icon: <TrendingUp size={16} />,
+    title: "Trading Pipeline",
+    items: [
+      {
+        path: "/agent-signals",
+        label: "Discovery",
+        icon: <Brain size={18} />,
+        badge: "A1",
+        badgeColor: "text-violet-400 border-violet-500/30 bg-violet-500/10",
+      },
+      {
+        path: "/market-open",
+        label: "Market Open",
+        icon: <Activity size={18} />,
+        badge: "A2",
+        badgeColor: "text-blue-400 border-blue-500/30 bg-blue-500/10",
+      },
+      {
+        path: "/technical-analysis",
+        label: "Tech Analysis",
+        icon: <LineChart size={18} />,
+        badge: "A2.5",
+        badgeColor: "text-cyan-400 border-cyan-500/30 bg-cyan-500/10",
+      },
+      {
+        path: "/execution-planner",
+        label: "Execution",
+        icon: <ClipboardList size={18} />,
+        badge: "A3",
+        badgeColor: "text-indigo-400 border-indigo-500/30 bg-indigo-500/10",
+      },
+    ],
   },
   {
-    path: "/technical-analysis",
-    label: "Technical Analysis (A2.5)",
-    icon: <BarChart3 size={16} />,
+    title: "Trading",
+    items: [
+      {
+        path: "/paper-trading",
+        label: "Paper Trading",
+        icon: <Wallet size={18} />,
+      },
+      {
+        path: "/opportunities",
+        label: "Opportunities",
+        icon: <TrendingUp size={18} />,
+      },
+    ],
   },
   {
-    path: "/execution-planner",
-    label: "Execution Planner (A3)",
-    icon: <ClipboardList size={16} />,
-  },
-  {
-    path: "/paper-trading",
-    label: "Paper Trading",
-    icon: <TrendingUp size={16} />,
-  },
-  { path: "/news-feed", label: "News Feed", icon: <Newspaper size={16} /> },
-  {
-    path: "/live-news",
-    label: "Live News Agent",
-    icon: <Zap size={16} />,
-  },
-  {
-    path: "/grouping",
-    label: "Stock Grouping",
-    icon: <LayoutGrid size={16} />,
+    title: "Data",
+    items: [
+      {
+        path: "/news-feed",
+        label: "News Feed",
+        icon: <Newspaper size={18} />,
+      },
+      {
+        path: "/grouping",
+        label: "Stock Grouping",
+        icon: <LayoutGrid size={18} />,
+      },
+    ],
   },
 ];
 
 const BOTTOM_ITEMS: NavItem[] = [
-  { path: "/settings", label: "Settings", icon: <Settings size={16} /> },
+  { path: "/settings", label: "Settings", icon: <Settings size={18} /> },
 ];
 
 export function AppSidebar() {
@@ -85,28 +124,29 @@ export function AppSidebar() {
   return (
     <aside
       className={cn(
-        "relative flex flex-col h-screen bg-card border-r border-border transition-all duration-200 shrink-0 z-20",
-        collapsed ? "w-[60px]" : "w-[240px]",
+        "relative flex flex-col h-screen border-r border-border transition-all duration-300 shrink-0 z-20",
+        "bg-sidebar",
+        collapsed ? "w-[68px]" : "w-[250px]",
       )}
       data-ocid="sidebar"
     >
       {/* Logo */}
       <div
         className={cn(
-          "flex items-center gap-2.5 px-3 py-4 border-b border-border",
+          "flex items-center gap-3 px-4 py-5 border-b border-sidebar-border",
           collapsed && "justify-center px-0",
         )}
       >
-        <div className="flex items-center justify-center w-7 h-7 rounded bg-primary/20 border border-primary/40 shrink-0">
-          <Terminal size={13} className="text-primary" />
+        <div className="flex items-center justify-center w-8 h-8 rounded-lg bg-gradient-to-br from-primary/80 to-primary shadow-lg shrink-0">
+          <Zap size={16} className="text-primary-foreground" />
         </div>
         {!collapsed && (
           <div className="flex flex-col min-w-0">
-            <span className="font-display text-sm font-semibold tracking-wider text-foreground truncate">
+            <span className="font-display text-sm font-bold tracking-wide text-foreground truncate">
               TradeSignal
             </span>
-            <span className="font-mono text-[9px] text-muted-foreground tracking-widest uppercase">
-              Intelligence
+            <span className="font-mono text-[10px] text-muted-foreground tracking-wider uppercase">
+              AI Trading Intelligence
             </span>
           </div>
         )}
@@ -114,23 +154,42 @@ export function AppSidebar() {
 
       {/* Main nav */}
       <nav
-        className="flex-1 flex flex-col gap-0.5 px-1.5 py-2 overflow-y-auto"
+        className="flex-1 flex flex-col gap-1 px-2 py-3 overflow-y-auto"
         data-ocid="sidebar.nav"
       >
-        {NAV_ITEMS.map((item) => (
-          <SidebarLink
-            key={item.path}
-            item={item}
-            collapsed={collapsed}
-            active={isActive(item.path)}
-          />
+        {NAV_SECTIONS.map((section, sectionIdx) => (
+          <div key={section.title} className={cn(sectionIdx > 0 && "mt-3")}>
+            {/* Section Header */}
+            {!collapsed && (
+              <div className="px-3 pb-1.5">
+                <span className="font-mono text-[10px] font-semibold uppercase tracking-[0.15em] text-muted-foreground/60">
+                  {section.title}
+                </span>
+              </div>
+            )}
+            {collapsed && sectionIdx > 0 && (
+              <Separator className="mx-3 my-1 opacity-20" />
+            )}
+
+            {/* Section Items */}
+            <div className="flex flex-col gap-0.5">
+              {section.items.map((item) => (
+                <SidebarLink
+                  key={item.path}
+                  item={item}
+                  collapsed={collapsed}
+                  active={isActive(item.path)}
+                />
+              ))}
+            </div>
+          </div>
         ))}
       </nav>
 
-      <Separator className="mx-2 opacity-30" />
+      <Separator className="mx-3 opacity-20" />
 
       {/* Bottom nav */}
-      <nav className="flex flex-col gap-0.5 px-1.5 py-2">
+      <nav className="flex flex-col gap-0.5 px-2 py-3">
         {BOTTOM_ITEMS.map((item) => (
           <SidebarLink
             key={item.path}
@@ -143,9 +202,9 @@ export function AppSidebar() {
 
       {/* Version badge */}
       {!collapsed && (
-        <div className="px-3 pb-3">
-          <div className="font-mono text-[9px] text-muted-foreground tracking-widest uppercase opacity-50">
-            v1.0.0 · Phase 1
+        <div className="px-4 pb-4">
+          <div className="font-mono text-[10px] text-muted-foreground/40 tracking-wider">
+            v1.0 · Production
           </div>
         </div>
       )}
@@ -153,12 +212,12 @@ export function AppSidebar() {
       {/* Collapse toggle */}
       <button
         onClick={toggleSidebar}
-        className="absolute -right-3 top-16 flex items-center justify-center w-6 h-6 rounded-full bg-card border border-border text-muted-foreground hover:text-foreground hover:border-primary/40 transition-smooth z-30"
+        className="absolute -right-3.5 top-[72px] flex items-center justify-center w-7 h-7 rounded-full bg-card border border-border shadow-md text-muted-foreground hover:text-foreground hover:border-primary/40 hover:bg-primary/5 transition-all z-30"
         type="button"
         aria-label={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         data-ocid="sidebar.toggle"
       >
-        {collapsed ? <ChevronRight size={12} /> : <ChevronLeft size={12} />}
+        {collapsed ? <ChevronRight size={14} /> : <ChevronLeft size={14} />}
       </button>
     </aside>
   );
@@ -177,37 +236,42 @@ function SidebarLink({
     <Link
       to={item.path}
       className={cn(
-        "group relative flex items-center gap-2.5 rounded px-2 py-2 transition-smooth",
-        "text-muted-foreground hover:text-foreground hover:bg-secondary",
-        active && "bg-primary/10 text-primary border border-primary/20",
+        "group relative flex items-center gap-3 rounded-lg px-3 py-2.5 transition-all duration-200",
+        "text-muted-foreground hover:text-foreground hover:bg-secondary/80",
+        active &&
+          "bg-primary/10 text-primary font-medium shadow-sm",
         collapsed && "justify-center px-0",
+        item.disabled && "opacity-40 pointer-events-none",
       )}
       data-ocid={`sidebar.nav.${item.label.toLowerCase().replace(/\s+/g, "_")}`}
       title={collapsed ? item.label : undefined}
     >
+      {/* Active indicator */}
+      {active && (
+        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-[3px] h-5 bg-primary rounded-r-full" />
+      )}
+
       <span className={cn("shrink-0", active && "text-primary")}>
         {item.icon}
       </span>
 
       {!collapsed && (
         <>
-          <span className="flex-1 text-xs font-medium truncate">
+          <span className="flex-1 text-[13px] truncate">
             {item.label}
           </span>
-          {item.phase && item.phase > 1 && (
+          {item.badge && (
             <Badge
               variant="outline"
-              className="text-[9px] px-1 py-0 h-4 font-mono border-border text-muted-foreground opacity-60 shrink-0"
+              className={cn(
+                "text-[9px] px-1.5 py-0 h-[18px] font-mono font-semibold shrink-0 rounded-md",
+                item.badgeColor || "border-border text-muted-foreground",
+              )}
             >
-              P{item.phase}
+              {item.badge}
             </Badge>
           )}
         </>
-      )}
-
-      {/* Active indicator */}
-      {active && (
-        <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-4 bg-primary rounded-r" />
       )}
     </Link>
   );

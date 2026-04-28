@@ -51,40 +51,46 @@ function OpportunitiesPage() {
   };
 
   return (
-    <div className="p-5 space-y-5" data-ocid="opportunities.page">
-      {/* System status bar */}
-      <div className="flex items-center justify-between flex-wrap gap-3" data-ocid="opportunities.status_bar">
-        <div className="flex items-center gap-1.5">
-          <Activity size={10} className="text-primary" />
-          <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest">
-            Live Trade Opportunities · Phase 2 Active
-          </span>
+    <div className="p-6 space-y-6 max-w-[1600px] mx-auto" data-ocid="opportunities.page">
+      {/* Header Bar */}
+      <div className="flex items-center justify-between flex-wrap gap-4 animate-fade-up" data-ocid="opportunities.status_bar">
+        <div>
+          <div className="flex items-center gap-3 mb-1">
+            <div className="flex items-center justify-center w-9 h-9 rounded-lg bg-emerald-500/15 text-emerald-400">
+              <TrendingUp size={20} />
+            </div>
+            <div>
+              <h2 className="font-display text-xl font-bold text-foreground tracking-tight">
+                Live Opportunities
+              </h2>
+              <p className="text-[12px] text-muted-foreground">
+                Real-time market scanner results with sentiment-grouped stock candidates
+              </p>
+            </div>
+          </div>
         </div>
         <div className="flex items-center gap-2">
-          <Badge
-            variant="outline"
-            className="font-mono text-[9px] px-2 py-0.5 border-border text-muted-foreground"
-          >
-            SYMBOLS: {!loading ? data.length : "—"}
+          <Badge variant="outline" className="text-[11px] px-3 py-1 border-border text-muted-foreground rounded-full">
+            {!loading ? data.length : "—"} Symbols
           </Badge>
           <Button
             variant="outline"
             size="sm"
             onClick={load}
             disabled={loading}
-            className="font-mono text-[10px] h-6 border-border text-foreground hover:bg-secondary"
+            className="text-[12px] h-8 border-border rounded-lg"
           >
-            <RefreshCw size={10} className={`mr-1.5 ${loading ? 'animate-spin' : ''}`} />
+            <RefreshCw size={13} className={cn("mr-1.5", loading && 'animate-spin')} />
             Refresh
           </Button>
         </div>
       </div>
 
       {/* Content Section */}
-      <div className="space-y-3">
+      <div className="space-y-3 animate-fade-up stagger-1">
         <div className="flex items-center gap-2">
-          <TrendingUp size={11} className="text-primary" />
-          <span className="font-mono text-[9px] text-muted-foreground uppercase tracking-widest">
+          <Activity size={14} className="text-primary" />
+          <span className="section-label">
             Analyzed Candidates
           </span>
         </div>

@@ -64,7 +64,20 @@ def create_database():
                     news_category TEXT,
                     affected_symbols TEXT[],
                     processing_status TEXT,
-                    raw_analysis_data JSON
+                    raw_analysis_data JSON,
+                    link TEXT,
+                    market_bias TEXT,
+                    signal_bucket TEXT,
+                    primary_symbol TEXT,
+                    affected_sectors TEXT[],
+                    affected_stocks JSON,
+                    raw_full_data JSON,
+                    news_impact_level TEXT,
+                    news_reason TEXT,
+                    event_id TEXT,
+                    event_title TEXT,
+                    confidence INTEGER DEFAULT 0,
+                    horizon TEXT
                 );
             """,
             "system_config": """
@@ -77,7 +90,9 @@ def create_database():
                     min_rr FLOAT DEFAULT 1.5,
                     news_endpoint_url TEXT,
                     polling_interval_mins INTEGER DEFAULT 5,
-                    processing_mode TEXT DEFAULT 'pre_market'
+                    processing_mode TEXT DEFAULT 'pre_market',
+                    max_loss_per_trade_pct FLOAT DEFAULT 1.0,
+                    max_capital_per_trade_pct FLOAT DEFAULT 20.0
                 );
             """,
             "processing_state": """
@@ -113,7 +128,11 @@ def create_database():
                     confirmation_data JSON,
                     execution_status TEXT DEFAULT 'pending',
                     executed_at BIGINT,
-                    execution_data JSON
+                    execution_data JSON,
+                    risk_monitor_status TEXT,
+                    risk_monitor_data JSON,
+                    risk_last_checked_at BIGINT,
+                    agent_1_reasoning JSON
                 );
                 CREATE INDEX IF NOT EXISTS idx_trade_signals_symbol ON trade_signals(symbol);
                 CREATE INDEX IF NOT EXISTS idx_trade_signals_market_date ON trade_signals(market_date);
@@ -242,33 +261,41 @@ def create_database():
                 cur.execute(create_sql)
                 print(f"  [OK] Table '{table_name}' created")
 
-        # --- Auto-migrate: add missing columns to existing tables ---
-        migrations = [
-            ("trade_signals", "confirmation_status", "TEXT DEFAULT 'pending'"),
-            ("trade_signals", "confirmed_at", "BIGINT"),
-            ("trade_signals", "confirmation_data", "JSON"),
-            ("trade_signals", "execution_status", "TEXT DEFAULT 'pending'"),
-            ("trade_signals", "executed_at", "BIGINT"),
-            ("trade_signals", "execution_data", "JSON"),
-            # Risk management columns for Agent 3 position sizing
-            ("system_config", "max_loss_per_trade_pct", "FLOAT DEFAULT 1.0"),
-            ("system_config", "max_capital_per_trade_pct", "FLOAT DEFAULT 20.0"),
-            # Risk Monitor Agent (Phase 4) columns
-            ("trade_signals", "risk_monitor_status", "TEXT"),
-            ("trade_signals", "risk_monitor_data", "JSON"),
-            ("trade_signals", "risk_last_checked_at", "BIGINT"),
-        ]
-        for tbl, col, col_type in migrations:
-            cur.execute(f"""
-                SELECT EXISTS (
-                    SELECT 1 FROM information_schema.columns
-                    WHERE table_name = '{tbl}' AND column_name = '{col}'
-                )
-            """)
-            col_exists = cur.fetchone()[0]
-            if not col_exists:
-                cur.execute(f"ALTER TABLE {tbl} ADD COLUMN {col} {col_type}")
-                print(f"  [MIGRATE] Added column '{col}' to '{tbl}'")
+        # --- Auto-migrate: dynamically add missing columns to existing tables ---
+        import re
+        for table_name, create_sql in tables.items():
+            match = re.search(r'CREATE\s+TABLE.*?\( (.*?) \)\s*;', create_sql, re.IGNORECASE | re.DOTALL | re.VERBOSE)
+            if match:
+                columns_def = match.group(1).split(',')
+                for col_def in columns_def:
+                    col_def = col_def.strip()
+                    if not col_def:
+                        continue
+                    
+                    if col_def.upper().startswith(('PRIMARY KEY', 'FOREIGN KEY', 'UNIQUE', 'CHECK', 'CONSTRAINT')):
+                        continue
+                        
+                    parts = col_def.split(maxsplit=1)
+                    if len(parts) >= 2:
+                        col_name = parts[0].strip('"')
+                        col_type = parts[1].strip()
+                        
+                        col_type_clean = re.sub(r'(?i)\bPRIMARY\s+KEY\b', '', col_type).strip()
+                        col_type_clean = re.sub(r'(?i)\bUNIQUE\b', '', col_type_clean).strip()
+
+                        cur.execute(f"""
+                            SELECT EXISTS (
+                                SELECT 1 FROM information_schema.columns
+                                WHERE table_name = '{table_name}' AND column_name = '{col_name}'
+                            )
+                        """)
+                        col_exists = cur.fetchone()[0]
+                        if not col_exists:
+                            try:
+                                cur.execute(f"ALTER TABLE {table_name} ADD COLUMN {col_name} {col_type_clean}")
+                                print(f"  [MIGRATE] Added column '{col_name}' to '{table_name}'")
+                            except Exception as e:
+                                print(f"  [ERROR] Failed to add column '{col_name}' to '{table_name}': {e}")
 
         cur.close()
         conn.close()

@@ -7,7 +7,7 @@ import {
 import { cn } from "@/lib/utils";
 import { formatUTC } from "@/lib/utils";
 import { useUIStore } from "@/stores/uiStore";
-import { Moon, RefreshCw, Sun } from "lucide-react";
+import { Moon, RefreshCw, Sun, Wifi, WifiOff } from "lucide-react";
 
 export function AppHeader() {
   const { activePageTitle, theme, toggleTheme } = useUIStore();
@@ -30,13 +30,13 @@ export function AppHeader() {
 
   return (
     <header
-      className="flex items-center gap-4 h-12 px-4 bg-card border-b border-border shrink-0"
+      className="flex items-center gap-4 h-14 px-5 bg-card/80 backdrop-blur-lg border-b border-border shrink-0 sticky top-0 z-10"
       data-ocid="header"
     >
       {/* Page title */}
       <div className="flex items-center gap-2 min-w-0">
         <h1
-          className="font-display text-sm font-semibold text-foreground truncate"
+          className="font-display text-base font-semibold text-foreground truncate tracking-tight"
           data-ocid="header.page_title"
         >
           {activePageTitle}
@@ -48,28 +48,29 @@ export function AppHeader() {
         {/* System mode */}
         <div
           className={cn(
-            "flex items-center gap-1.5 px-2.5 py-1 rounded font-mono text-[10px] tracking-widest uppercase border",
+            "flex items-center gap-2 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold tracking-wider uppercase border transition-all",
             isLive
-              ? "bg-primary/10 border-primary/30 text-primary"
+              ? "bg-emerald-500/10 border-emerald-500/30 text-emerald-400 glow-emerald"
               : "bg-secondary border-border text-muted-foreground",
           )}
           data-ocid="header.system_mode"
         >
           {isLive && (
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-primary" />
+            <span className="relative flex h-2 w-2">
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-emerald-400 opacity-75" />
+              <span className="relative inline-flex rounded-full h-2 w-2 bg-emerald-400" />
             </span>
           )}
-          [ {systemMode.toUpperCase()} ]
+          {systemMode.toUpperCase()}
         </div>
 
+        {/* Endpoint status */}
         <div
-          className="flex items-center gap-1.5 px-2 py-1 rounded font-mono text-[10px] tracking-wider uppercase border bg-chart-1/10 border-chart-1/30 text-chart-1"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-full font-mono text-[11px] font-semibold tracking-wider uppercase border bg-emerald-500/10 border-emerald-500/30 text-emerald-400"
           data-ocid="header.endpoint_status"
         >
-          <span className="inline-flex rounded-full h-1.5 w-1.5 bg-chart-1" />
-          LIVE ENDPOINT
+          <span className="inline-flex rounded-full h-2 w-2 bg-emerald-400" />
+          Connected
         </div>
       </div>
 
@@ -79,29 +80,29 @@ export function AppHeader() {
         <span
           className="font-mono text-[11px] text-muted-foreground hidden md:block"
           data-ocid="header.last_refresh"
+          title="Last data refresh time"
         >
-          {lastRefresh === "Never" ? "Never" : `${lastRefresh} UTC`}
+          {lastRefresh === "Never" ? "Never refreshed" : `${lastRefresh} UTC`}
         </span>
 
         {/* Polling indicator */}
         <div
           className={cn(
-            "flex items-center gap-1.5 font-mono text-[10px] uppercase tracking-wider",
-            isPolling ? "text-chart-1" : "text-muted-foreground",
+            "flex items-center gap-2 px-2.5 py-1 rounded-full font-mono text-[11px] font-medium uppercase tracking-wider border transition-all",
+            isPolling
+              ? "text-emerald-400 border-emerald-500/20 bg-emerald-500/5"
+              : "text-muted-foreground border-border bg-secondary/50",
           )}
-          title={isPolling ? "Polling active" : "Polling inactive"}
+          title={isPolling ? "Auto-polling is active — data refreshes automatically" : "Auto-polling is off — use manual refresh"}
           data-ocid="header.polling_status"
         >
           {isPolling ? (
-            <span className="relative flex h-2 w-2">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-chart-1 opacity-60" />
-              <span className="relative inline-flex rounded-full h-2 w-2 bg-chart-1" />
-            </span>
+            <Wifi size={13} className="text-emerald-400" />
           ) : (
-            <span className="inline-flex rounded-full h-2 w-2 bg-muted" />
+            <WifiOff size={13} />
           )}
           <span className="hidden lg:inline">
-            {isPolling ? "LIVE" : "IDLE"}
+            {isPolling ? "Auto" : "Manual"}
           </span>
         </div>
 
@@ -109,14 +110,15 @@ export function AppHeader() {
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg"
           onClick={handleRefresh}
           disabled={triggerFetch.isPending}
           aria-label="Trigger manual refresh"
+          title="Fetch latest data from all sources"
           data-ocid="header.refresh_button"
         >
           <RefreshCw
-            size={13}
+            size={15}
             className={cn(triggerFetch.isPending && "animate-spin")}
           />
         </Button>
@@ -125,12 +127,13 @@ export function AppHeader() {
         <Button
           variant="ghost"
           size="icon"
-          className="h-7 w-7 text-muted-foreground hover:text-foreground"
+          className="h-8 w-8 text-muted-foreground hover:text-foreground hover:bg-secondary rounded-lg"
           onClick={toggleTheme}
           aria-label="Toggle color theme"
+          title={theme === "dark" ? "Switch to light mode" : "Switch to dark mode"}
           data-ocid="header.theme_toggle"
         >
-          {theme === "dark" ? <Sun size={13} /> : <Moon size={13} />}
+          {theme === "dark" ? <Sun size={15} /> : <Moon size={15} />}
         </Button>
       </div>
     </header>
