@@ -115,8 +115,8 @@ def _pre_market_news_fetch_job():
             return
 
         print(f"[SCHEDULER] Fetching from: {endpoint_url[:80]}...")
-        new_count = trigger_news_fetch(endpoint_url, db)
-        print(f"[SCHEDULER] Done! Saved {new_count} new articles to DB")
+        new_ids = trigger_news_fetch(endpoint_url, db)
+        print(f"[SCHEDULER] Done! Saved {len(new_ids)} new articles to DB")
 
     except Exception as e:
         print(f"[SCHEDULER] Pre-market news fetch FAILED: {e}")
@@ -213,7 +213,9 @@ def _market_open_confirmation_job():
     print(f"[SCHEDULER] Market opened at 09:15 — running confirmation with live data...")
 
     try:
-        result = run_market_open_confirmation()
+        from database import SessionLocal
+        db = SessionLocal()
+        result = run_market_open_confirmation(db=db)
         total = result.get("total_checked", 0)
         s = result.get("summary", {})
         duration = result.get("duration_ms", 0)
@@ -228,6 +230,9 @@ def _market_open_confirmation_job():
     except Exception as e:
         print(f"[SCHEDULER] Agent 2 FAILED: {e}")
         traceback.print_exc()
+    finally:
+        if 'db' in locals():
+            db.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -341,6 +346,44 @@ def _live_news_monitor_job():
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# JOB 8: Agent 2.5 Retry for WAIT signals (every 10 min during market hours)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def _agent25_retry_job():
+    """
+    Re-evaluate confirmed signals where Agent 2.5 previously said WAIT.
+    Runs every 10 minutes during market hours (09:30 - 15:15 IST).
+    Fresh technical data may upgrade a WAIT to GO, triggering Agent 3.
+    """
+    now = datetime.now(IST)
+
+    # Skip outside market hours and weekends
+    if now.weekday() >= 5:
+        return
+    hhmm = now.hour * 100 + now.minute
+    if hhmm < 930 or hhmm > 1515:
+        return
+
+    if not is_trading_day(now.date()):
+        return
+
+    try:
+        from agent.technical_analysis.technical_analysis_agent import run_technical_analysis
+        db = SessionLocal()
+
+        try:
+            result = run_technical_analysis(db)
+            analyzed = result.get("summary", {}).get("analyzed", 0)
+            if analyzed > 0:
+                print(f"[AGENT 2.5 RETRY] {now.strftime('%H:%M:%S')} | Re-analyzed {analyzed} signal(s)")
+        finally:
+            db.close()
+
+    except Exception as e:
+        print(f"[AGENT 2.5 RETRY] Error: {e}")
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Scheduler Init / Shutdown
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -385,7 +428,7 @@ def init_scheduler():
     # opening candle: open price, volume surge, gap direction, 5-min high/low.
     scheduler.add_job(
         _market_open_confirmation_job,
-        trigger=CronTrigger(hour=9, minute=16, day_of_week="mon-fri", timezone=IST_TZ),
+        trigger=CronTrigger(hour=9, minute=19, day_of_week="mon-fri", timezone=IST_TZ),
         id="market_open_confirmation",
         name="Market Open Confirmation Agent (09:16 AM IST)",
         replace_existing=True,
@@ -418,6 +461,15 @@ def init_scheduler():
         replace_existing=True,
     )
 
+    # ── JOB 8: Agent 2.5 Retry for WAIT signals (every 10 min) ──────────
+    scheduler.add_job(
+        _agent25_retry_job,
+        trigger=IntervalTrigger(minutes=10, timezone=IST_TZ),
+        id="agent25_retry",
+        name="Agent 2.5 WAIT Retry (every 10min, 09:30-15:15 Mon-Fri)",
+        replace_existing=True,
+    )
+
     scheduler.start()
     _is_started = True
 
@@ -429,6 +481,7 @@ def init_scheduler():
     print(f"  5. Risk Monitor (Agent 4)        : every 30s (09:16-15:30 Mon-Fri)")
     print(f"  6. Paper Trade Monitor           : every 15s (09:16-15:30 Mon-Fri)")
     print(f"  7. Live News Monitor (Agent 1+2) : every 60s (09:15-15:30 Mon-Fri)")
+    print(f"  8. Agent 2.5 WAIT Retry          : every 10min (09:30-15:15 Mon-Fri)")
     print(f"[SCHEDULER] ==================================\n")
 
 

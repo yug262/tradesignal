@@ -3,15 +3,20 @@
 Runs every minute during NSE market hours (09:15-15:30 IST, Mon-Fri).
 
 Pipeline per run:
-  1. Fetch news published in the last 2 minutes with impact_score >= 5
-  2. Deduplicate (skip already-processed article IDs for today)
-  3. For each affected symbol:
+  1. Fetch news from external endpoint → get newly saved article IDs
+  2. Also sweep DB for recent high-impact articles (fallback)
+  3. Deduplicate (skip already-processed article IDs for today)
+  4. For each affected symbol:
        a. Fetch current live LTP (Groww API)
        b. Fetch price at news publish time (1-min candle lookup)
        c. Fetch past news bundle for this symbol today (last 4h, from DB)
        d. Run Gemini Live Analyzer (combined Agent 1+2 fast prompt)
        e. Store result to DBLiveNewsEvent table
-       f. If should_trade == True and confidence >= 65 -> trigger Agent 3
+       f. If should_trade == True and confidence >= 65 → trigger Agent 2.5 → 3
+
+Every article fetched from the endpoint is analyzed regardless of its
+published_at timestamp. In-memory dedup prevents re-analysis within the
+same trading day session.
 """
 
 import time
@@ -32,11 +37,11 @@ from agent.market_calendar import is_trading_day, IST
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 # Minimum impact score to qualify for live analysis
-MIN_IMPACT_SCORE = 5.0
+MIN_IMPACT_SCORE = 4.0
 
 # How far back (seconds) to look for "new" news in each polling cycle
-# 120s = 2 minutes (catch up with any delay)
-POLL_WINDOW_SECONDS = 120
+# 900s = 15 minutes (catch up with any delay from external API or publishing)
+POLL_WINDOW_SECONDS = 900
 
 # Minimum confidence to trigger Agent 3
 AGENT3_TRIGGER_CONFIDENCE = 65
@@ -48,8 +53,15 @@ _processed_date: str = ""  # YYYY-MM-DD
 
 # ── Price Helpers ─────────────────────────────────────────────────────────────
 
-def _get_live_price(symbol: str) -> float | None:
-    """Fetch the current live LTP for a symbol using Groww's price API."""
+def _get_live_stock_data(symbol: str) -> dict | None:
+    """
+    Fetch comprehensive live market data for a symbol using Groww's price API.
+    
+    Returns dict with:
+      ltp, prev_close, open, high, low, volume, day_change_pct, day_change_amt,
+      gap_pct, 52w_high, 52w_low
+    or None on failure.
+    """
     clean = symbol.replace(".NS", "").strip().upper()
     headers = {
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
@@ -61,13 +73,44 @@ def _get_live_price(symbol: str) -> float | None:
         )
         with httpx.Client(timeout=8.0, headers=headers) as client:
             resp = client.get(url)
-            if resp.status_code == 200:
-                data = resp.json()
-                ltp = data.get("ltp") or data.get("close")
-                if ltp:
-                    return float(ltp)
+            if resp.status_code != 200:
+                print(f"  [LIVE DATA] HTTP {resp.status_code} for {symbol}")
+                return None
+
+            raw = resp.json()
+            ltp = raw.get("ltp") or raw.get("close")
+            if not ltp:
+                return None
+
+            prev_close = raw.get("close", 0)
+            today_open = raw.get("open", 0)
+            today_high = raw.get("high", 0)
+            today_low = raw.get("low", 0)
+            volume = raw.get("volume", 0)
+            day_change_pct = raw.get("dayChangePerc", 0)
+            day_change_amt = raw.get("dayChange", 0)
+            year_high = raw.get("yearHighPrice")
+            year_low = raw.get("yearLowPrice")
+
+            gap_pct = 0.0
+            if prev_close and today_open and prev_close > 0:
+                gap_pct = round(((today_open - prev_close) / prev_close) * 100, 2)
+
+            return {
+                "ltp": float(ltp),
+                "prev_close": float(prev_close) if prev_close else None,
+                "open": float(today_open) if today_open else None,
+                "high": float(today_high) if today_high else None,
+                "low": float(today_low) if today_low else None,
+                "volume": int(volume) if volume else 0,
+                "day_change_pct": round(float(day_change_pct), 2) if day_change_pct else 0.0,
+                "day_change_amt": round(float(day_change_amt), 2) if day_change_amt else 0.0,
+                "gap_pct": gap_pct,
+                "52w_high": float(year_high) if year_high else None,
+                "52w_low": float(year_low) if year_low else None,
+            }
     except Exception as e:
-        print(f"  [LIVE PRICE] Error fetching LTP for {symbol}: {e}")
+        print(f"  [LIVE DATA] Error fetching for {symbol}: {e}")
     return None
 
 
@@ -303,25 +346,61 @@ def run_live_news_monitor() -> dict:
 
         print(f"\n[LIVE AGENT] {now.strftime('%H:%M:%S IST')} — Polling for live news...")
 
-        # ── Step 1: Optionally pull fresh news from endpoint ──────────────────
+        # ── Step 1: Pull fresh news from endpoint → get newly saved article IDs ──
+        fetched_ids: list[str] = []
         config = _get_store().config
         if config.news_endpoint_url:
-            new_count = trigger_news_fetch(config.news_endpoint_url, db)
-            if new_count > 0:
-                print(f"  [FETCH] Pulled {new_count} new articles from endpoint")
+            fetched_ids = trigger_news_fetch(config.news_endpoint_url, db)
+            if fetched_ids:
+                print(f"  [FETCH] Pulled {len(fetched_ids)} new articles from endpoint")
 
-        # ── Step 2: Fetch recent high-impact news (last 2 min) ────────────────
+        # ── Step 2: Query ALL articles we need to process ─────────────────────
+        # Strategy: Use the freshly fetched IDs (regardless of published_at)
+        # PLUS any recent high-impact articles from the DB that haven't been
+        # processed yet (catches articles arriving through other channels).
+        articles_by_id: dict[str, dict] = {}
+
+        # 2a. Load the freshly fetched articles by their IDs (no time filter)
+        if fetched_ids:
+            fetched_articles = (
+                db.query(db_models.NewsArticle)
+                .filter(db_models.NewsArticle.id.in_(fetched_ids))
+                .filter(db_models.NewsArticle.impact_score >= MIN_IMPACT_SCORE)
+                .all()
+            )
+            for a in fetched_articles:
+                articles_by_id[a.id] = {
+                    "id": a.id,
+                    "title": a.title,
+                    "description": a.description,
+                    "source": a.source,
+                    "published_at": a.published_at,
+                    "impact_score": a.impact_score,
+                    "impact_summary": a.impact_summary,
+                    "executive_summary": a.executive_summary,
+                    "news_category": a.news_category,
+                    "affected_symbols": a.affected_symbols or [],
+                    "raw_analysis_data": a.raw_analysis_data,
+                }
+
+        # 2b. Also sweep for any recent DB articles (fallback for non-endpoint sources)
         recent_articles = _fetch_new_news(db)
-        if not recent_articles:
+        for a in recent_articles:
+            if a["id"] not in articles_by_id:
+                articles_by_id[a["id"]] = a
+
+        all_candidates = list(articles_by_id.values())
+
+        if not all_candidates:
             summary["status"] = "no_new_news"
-            print(f"  [LIVE AGENT] No high-impact news in last {POLL_WINDOW_SECONDS}s")
+            print(f"  [LIVE AGENT] No articles to process")
             return summary
 
         # ── Step 3: Deduplicate — only process genuinely new articles ─────────
-        new_articles = _filter_new_articles(recent_articles)
+        new_articles = _filter_new_articles(all_candidates)
         if not new_articles:
             summary["status"] = "all_already_processed"
-            print(f"  [LIVE AGENT] {len(recent_articles)} article(s) already processed — skipping")
+            print(f"  [LIVE AGENT] {len(all_candidates)} article(s) already processed — skipping")
             return summary
 
         summary["new_articles_found"] = len(new_articles)
@@ -349,9 +428,19 @@ def run_live_news_monitor() -> dict:
             print(f"\n  -- Analyzing {symbol} ({len(symbol_articles)} article(s)) --")
 
             try:
-                # 5a. Fetch current live LTP
-                current_price = _get_live_price(symbol)
-                print(f"     Current LTP: {f'Rs.{current_price:.2f}' if current_price else 'N/A'}")
+                # 5a. Fetch live market data (full context)
+                live_data = _get_live_stock_data(symbol)
+                current_price = live_data["ltp"] if live_data else None
+                
+                if live_data:
+                    print(
+                        f"     LTP: Rs.{live_data['ltp']:.2f} | "
+                        f"Open: {live_data['open']} | High: {live_data['high']} | Low: {live_data['low']} | "
+                        f"Change: {live_data['day_change_pct']:+.2f}% | "
+                        f"Vol: {live_data['volume']:,} | Gap: {live_data['gap_pct']:+.2f}%"
+                    )
+                else:
+                    print(f"     Live data: N/A")
 
                 # 5b. Fetch price at time of earliest article in this batch
                 earliest_article = min(symbol_articles, key=lambda a: a.get("published_at", 0))
@@ -366,13 +455,14 @@ def run_live_news_monitor() -> dict:
                 past_news = [p for p in past_news if p["id"] not in new_ids]
                 print(f"     Past news context: {len(past_news)} article(s)")
 
-                # 5d. Run Gemini Live Analyzer
+                # 5d. Run Gemini Live Analyzer (with full market data)
                 gemini_output = analyze_live(
                     symbol=symbol,
                     new_news=symbol_articles,
                     past_news_bundle=past_news if past_news else None,
                     current_price=current_price,
                     publish_time_price=publish_time_price,
+                    live_market_data=live_data,
                 )
 
                 should_trade = gemini_output.get("should_trade", False)

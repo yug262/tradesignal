@@ -181,7 +181,7 @@ def _build_technical_context(
     }
 
 
-def run_market_open_confirmation(db: Session, debug_mode: bool = True) -> dict:
+def run_market_open_confirmation(db: Session, debug_mode: bool = False) -> dict:
     """
     Execute the Market Open Confirmation pipeline (Agent 2).
 

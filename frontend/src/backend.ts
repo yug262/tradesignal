@@ -211,4 +211,19 @@ export const api = {
   triggerPaperTradeMonitor() {
     return request<any>("/paper-trading/monitor", { method: "POST" });
   },
+
+  // ─── Live News Agent ────────────────────────────────────────────────
+  getLiveNewsEvents(params?: { date?: string; symbol?: string; only_trades?: boolean; limit?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.date) qs.set("date", params.date);
+    if (params?.symbol) qs.set("symbol", params.symbol);
+    if (params?.only_trades) qs.set("only_trades", "true");
+    if (params?.limit) qs.set("limit", String(params.limit));
+    const query = qs.toString();
+    return request<any>(`/agent/live-news/events${query ? `?${query}` : ""}`);
+  },
+
+  triggerLiveNewsMonitor() {
+    return request<any>("/agent/live-news/run", { method: "POST" });
+  },
 };

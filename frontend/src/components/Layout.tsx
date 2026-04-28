@@ -10,6 +10,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/opportunities": "Live Trade Opportunities",
   "/agent-signals": "Pre-Market Trade Signals",
   "/news-feed": "News-to-Trade Feed",
+  "/live-news": "Live News Agent",
   "/mode-analysis": "Mode Analysis",
   "/trade-planner": "Trade Planner",
   "/journal": "Journal / History",

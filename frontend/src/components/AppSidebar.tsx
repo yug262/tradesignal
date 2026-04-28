@@ -17,6 +17,7 @@ import {
   Settings,
   Terminal,
   TrendingUp,
+  Zap,
 } from "lucide-react";
 
 interface NavItem {
@@ -54,6 +55,11 @@ const NAV_ITEMS: NavItem[] = [
     icon: <TrendingUp size={16} />,
   },
   { path: "/news-feed", label: "News Feed", icon: <Newspaper size={16} /> },
+  {
+    path: "/live-news",
+    label: "Live News Agent",
+    icon: <Zap size={16} />,
+  },
   {
     path: "/grouping",
     label: "Stock Grouping",
