@@ -213,7 +213,9 @@ def _market_open_confirmation_job():
     print(f"[SCHEDULER] Market opened at 09:15 — running confirmation with live data...")
 
     try:
-        result = run_market_open_confirmation()
+        from database import SessionLocal
+        db = SessionLocal()
+        result = run_market_open_confirmation(db=db)
         total = result.get("total_checked", 0)
         s = result.get("summary", {})
         duration = result.get("duration_ms", 0)
@@ -228,6 +230,9 @@ def _market_open_confirmation_job():
     except Exception as e:
         print(f"[SCHEDULER] Agent 2 FAILED: {e}")
         traceback.print_exc()
+    finally:
+        if 'db' in locals():
+            db.close()
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -385,7 +390,7 @@ def init_scheduler():
     # opening candle: open price, volume surge, gap direction, 5-min high/low.
     scheduler.add_job(
         _market_open_confirmation_job,
-        trigger=CronTrigger(hour=9, minute=16, day_of_week="mon-fri", timezone=IST_TZ),
+        trigger=CronTrigger(hour=9, minute=19, day_of_week="mon-fri", timezone=IST_TZ),
         id="market_open_confirmation",
         name="Market Open Confirmation Agent (09:16 AM IST)",
         replace_existing=True,

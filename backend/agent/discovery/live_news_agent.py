@@ -32,11 +32,11 @@ from agent.market_calendar import is_trading_day, IST
 # ── Constants ─────────────────────────────────────────────────────────────────
 
 # Minimum impact score to qualify for live analysis
-MIN_IMPACT_SCORE = 5.0
+MIN_IMPACT_SCORE = 4.0
 
 # How far back (seconds) to look for "new" news in each polling cycle
-# 120s = 2 minutes (catch up with any delay)
-POLL_WINDOW_SECONDS = 120
+# 900s = 15 minutes (catch up with any delay from external API or publishing)
+POLL_WINDOW_SECONDS = 900
 
 # Minimum confidence to trigger Agent 3
 AGENT3_TRIGGER_CONFIDENCE = 65
