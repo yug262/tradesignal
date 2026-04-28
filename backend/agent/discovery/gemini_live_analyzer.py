@@ -24,7 +24,9 @@ Output (JSON):
     "remaining_move_estimate": str,  -- Qualitative assessment of remaining upside/downside
     "should_trade"          : bool,  -- Is there still alpha to capture?
     "trade_reason"          : str,   -- Crisp reason for should_trade decision
-    "confidence"            : int    -- 0-100
+    "confidence"            : int,   -- 0-100
+    "indicators_to_check"   : dict,  -- {trend: [...], momentum: [...], ...} for Agent 2.5
+    "timeframe_plan"        : dict   -- {primary_timeframe, reason} for Agent 2.5
   }
 """
 
@@ -83,6 +85,15 @@ LIVE_ANALYSIS_PROMPT = """You are analyzing live breaking news for {symbol} duri
 === LIVE MARKET DATA ===
 Symbol          : {symbol}
 Current LTP     : {current_price}
+Prev Close      : {prev_close}
+Today Open      : {today_open}
+Today High      : {today_high}
+Today Low       : {today_low}
+Day Change      : {day_change}
+Gap at Open     : {gap_pct}
+Volume          : {volume}
+52-Week High    : {year_high}
+52-Week Low     : {year_low}
 Price at news publish time : {publish_time_price}
 Move since news : {move_since_news}
 
@@ -121,6 +132,15 @@ Given the confirmed facts, market bias, and how much move has already happened:
 - Is the risk/reward still favorable?
 - Decision: should_trade = true only if there is clear, actionable edge remaining.
 
+STEP 9 — INDICATOR SELECTION (only if should_trade = true)
+If you are recommending a trade, select indicators from this universe that the Technical Analysis Agent should check to validate the setup:
+  trend: SMA, EMA, WMA, DEMA, TEMA, MACD, ADX, AROON, PARABOLIC_SAR, ICHIMOKU
+  momentum: RSI, STOCHASTIC, CCI, ROC, MOM, WILLIAMS_R, MFI
+  volatility: ATR, BOLLINGER_BANDS, KELTNER_CHANNEL, DONCHIAN_CHANNEL, NATR
+  volume: OBV, AD, ADOSC, CMF, VWAP
+Pick 2-4 indicators per category that are most relevant for this specific setup.
+If should_trade = false, leave all arrays empty.
+
 === OUTPUT FORMAT ===
 Respond ONLY with this exact JSON structure:
 
@@ -136,7 +156,17 @@ Respond ONLY with this exact JSON structure:
   "remaining_move_estimate": "Qualitative: 'Most of the move is done', 'Significant upside remains', 'Cannot assess', etc.",
   "should_trade": false,
   "trade_reason": "Crisp 1-2 line reason for should_trade decision",
-  "confidence": 72
+  "confidence": 72,
+  "indicators_to_check": {{
+    "trend": ["EMA", "MACD"],
+    "momentum": ["RSI"],
+    "volatility": ["ATR"],
+    "volume": ["VWAP"]
+  }},
+  "timeframe_plan": {{
+    "primary_timeframe": "1m",
+    "reason": "Intraday news-driven setup, need 1m resolution"
+  }}
 }}"""
 
 
@@ -193,6 +223,7 @@ def analyze_live(
     past_news_bundle: list[dict] | None,
     current_price: float | None,
     publish_time_price: float | None,
+    live_market_data: dict | None = None,
 ) -> dict:
     """
     Run the combined Agent 1+2 live analysis for a breaking news event.
@@ -203,6 +234,7 @@ def analyze_live(
         past_news_bundle  : Earlier news for this symbol today (for context)
         current_price     : Live LTP right now (float or None)
         publish_time_price: LTP at news publish time (float or None)
+        live_market_data  : Full market snapshot dict (open, high, low, volume, etc.) or None
 
     Returns:
         dict with keys: what_happened, what_is_confirmed, why_news_matters,
@@ -225,6 +257,8 @@ def analyze_live(
     past_news_section = _format_articles(past_news_bundle or [], "past news")
     move_since_news = _format_move(current_price, publish_time_price)
 
+    # Build rich market data fields from live_market_data dict
+    md = live_market_data or {}
     prompt = LIVE_ANALYSIS_PROMPT.format(
         symbol=symbol,
         market_date=market_date,
@@ -232,6 +266,15 @@ def analyze_live(
         new_news_section=new_news_section,
         past_news_section=past_news_section,
         current_price=f"₹{current_price:.2f}" if current_price else "Not available",
+        prev_close=f"₹{md['prev_close']:.2f}" if md.get('prev_close') else "N/A",
+        today_open=f"₹{md['open']:.2f}" if md.get('open') else "N/A",
+        today_high=f"₹{md['high']:.2f}" if md.get('high') else "N/A",
+        today_low=f"₹{md['low']:.2f}" if md.get('low') else "N/A",
+        day_change=f"{md.get('day_change_pct', 0):+.2f}% (₹{md.get('day_change_amt', 0):+.2f})" if md else "N/A",
+        gap_pct=f"{md.get('gap_pct', 0):+.2f}%" if md else "N/A",
+        volume=f"{md.get('volume', 0):,}" if md else "N/A",
+        year_high=f"₹{md['52w_high']:.2f}" if md.get('52w_high') else "N/A",
+        year_low=f"₹{md['52w_low']:.2f}" if md.get('52w_low') else "N/A",
         publish_time_price=f"₹{publish_time_price:.2f}" if publish_time_price else "Not available",
         move_since_news=move_since_news,
     )
@@ -243,7 +286,6 @@ def analyze_live(
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,
                 temperature=0.1,
-                max_output_tokens=1024,
             ),
         )
 
@@ -287,10 +329,137 @@ def analyze_live(
 
     except json.JSONDecodeError as e:
         logger.error(f"Invalid JSON for {symbol}: {e}")
+        logger.debug(f"Raw response text: {text[:500]}")
+        # Attempt repair: truncated Gemini responses often have unterminated strings
+        repaired = _try_repair_json(text)
+        if repaired:
+            repaired["_source"] = "gemini_live_repaired"
+            repaired["_model"] = MODEL_NAME
+            logger.info(f"Repaired JSON for {symbol}. should_trade={repaired.get('should_trade')}, confidence={repaired.get('confidence')}")
+            return repaired
         return _fallback_analysis(symbol, new_news, current_price, publish_time_price)
     except Exception as e:
         logger.error(f"Gemini error for {symbol}: {e}")
         return _fallback_analysis(symbol, new_news, current_price, publish_time_price)
+
+
+# ── JSON Repair ───────────────────────────────────────────────────────────────
+
+def _try_repair_json(text: str) -> dict | None:
+    """
+    Attempt to repair truncated JSON from Gemini.
+    
+    Common failure modes:
+      - Unterminated string (response cut off mid-value)
+      - Missing closing braces
+      - Trailing comma before closing brace
+    """
+    import re
+    
+    if not text or not text.strip():
+        return None
+    
+    repaired = text.strip()
+    
+    # Try parsing as-is first (maybe just whitespace issues)
+    try:
+        return json.loads(repaired)
+    except json.JSONDecodeError:
+        pass
+    
+    # Strategy 1: If the response is truncated mid-string, close the string and object
+    # Find the last complete key-value pair and truncate there
+    try:
+        # Try to find the last complete "key": value pair
+        # Look for the last comma that separates complete key-value pairs
+        last_good_comma = -1
+        depth = 0
+        in_string = False
+        escape_next = False
+        
+        for i, ch in enumerate(repaired):
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == '\\':
+                escape_next = True
+                continue
+            if ch == '"' and not escape_next:
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+            elif ch == ',' and depth == 1:
+                last_good_comma = i
+        
+        if last_good_comma > 0:
+            truncated = repaired[:last_good_comma].strip()
+            # Close the JSON object
+            if not truncated.endswith('}'):
+                truncated += '\n}'
+            try:
+                return json.loads(truncated)
+            except json.JSONDecodeError:
+                pass
+    except Exception:
+        pass
+    
+    # Strategy 2: Regex extraction of key fields from partial JSON
+    try:
+        fields = {}
+        
+        # Extract string fields
+        for key in ["what_happened", "what_is_confirmed", "why_news_matters", 
+                    "market_bias", "trading_thesis", "invalidation_logic",
+                    "remaining_move_estimate", "trade_reason"]:
+            match = re.search(rf'"{ key }"\s*:\s*"((?:[^"\\]|\\.)*)"', repaired)
+            if match:
+                fields[key] = match.group(1)
+        
+        # Extract boolean fields
+        for key in ["market_reacted", "should_trade"]:
+            match = re.search(rf'"{ key }"\s*:\s*(true|false)', repaired, re.IGNORECASE)
+            if match:
+                fields[key] = match.group(1).lower() == "true"
+        
+        # Extract numeric fields
+        for key in ["reaction_magnitude_pct", "confidence"]:
+            match = re.search(rf'"{ key }"\s*:\s*([\d.]+)', repaired)
+            if match:
+                val = float(match.group(1))
+                fields[key] = int(val) if key == "confidence" else val
+        
+        # Need at least market_bias to consider this a valid repair
+        if "market_bias" in fields:
+            # Fill defaults for missing fields
+            defaults = {
+                "what_happened": "(truncated response)",
+                "what_is_confirmed": "(truncated response)",
+                "why_news_matters": "(truncated response)",
+                "market_bias": "NEUTRAL",
+                "trading_thesis": "(truncated response)",
+                "invalidation_logic": "(truncated response)",
+                "market_reacted": False,
+                "reaction_magnitude_pct": 0.0,
+                "remaining_move_estimate": "Cannot assess — response was truncated",
+                "should_trade": False,
+                "trade_reason": "(truncated response — defaulting to no trade)",
+                "confidence": 0,
+            }
+            for k, v in defaults.items():
+                if k not in fields:
+                    fields[k] = v
+            
+            logger.info(f"Repaired via regex extraction. Found {len(fields)} fields.")
+            return fields
+    except Exception:
+        pass
+    
+    return None
 
 
 # ── Fallback ──────────────────────────────────────────────────────────────────
@@ -323,6 +492,8 @@ def _fallback_analysis(
         "should_trade": False,
         "trade_reason": "Fallback mode — Gemini API unavailable. No trade recommendation.",
         "confidence": 0,
+        "indicators_to_check": {},
+        "timeframe_plan": {"primary_timeframe": "1m", "reason": "fallback default"},
         "_source": "fallback",
         "_model": "rule_engine_only",
     }

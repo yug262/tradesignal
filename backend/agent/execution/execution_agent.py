@@ -389,13 +389,23 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
                 }
 
                 if handoff.get("technical_go_no_go") in ["WAIT", "NO_GO"]:
-                    print(f"      [SKIP] {sig.symbol}: Agent 2.5 technical_go_no_go is {handoff.get('technical_go_no_go')} — skipping execution planning.")
-                    sig.execution_status = "skipped"
-                    sig.executed_at = _now_ms()
+                    verdict = handoff.get("technical_go_no_go")
+                    go_reason = handoff.get("go_no_go_reason", "")
+                    print(f"      [SKIP] {sig.symbol}: Agent 2.5 technical_go_no_go is {verdict} — skipping execution planning.")
+                    
+                    if verdict == "WAIT":
+                        # Keep as pending so the retry mechanism can re-evaluate with fresh data
+                        # Don't change execution_status — it stays "pending"
+                        print(f"      [RETRY] {sig.symbol}: Will be re-evaluated by Agent 2.5 in ~10 minutes")
+                    else:
+                        # NO_GO → permanently skip
+                        sig.execution_status = "skipped"
+                        sig.executed_at = _now_ms()
+                    
                     exec_data_new = dict(exec_data)
-                    exec_data_new["action"] = "AVOID"
-                    exec_data_new["execution_decision"] = "NO TRADE"
-                    exec_data_new["why_now_or_why_wait"] = handoff.get("go_no_go_reason", "Agent 2.5 determined it is not a GO.")
+                    exec_data_new["action"] = "AVOID" if verdict == "NO_GO" else "WAIT"
+                    exec_data_new["execution_decision"] = "NO TRADE" if verdict == "NO_GO" else "WAITING"
+                    exec_data_new["why_now_or_why_wait"] = go_reason or f"Agent 2.5 determined: {verdict}"
                     exec_data_new["_source"] = "agent25_skip"
                     sig.execution_data = exec_data_new
                     summary["avoided"] += 1
@@ -455,8 +465,8 @@ def run_execution_planner(db: Session = None, signal_ids: list = None) -> dict:
 
             tasks.append((sig, agent3_input, chart_image_bytes))
 
-        # Persist skipped signals before moving to Gemini calls
-        db.flush()
+        # Persist skipped/avoided signals to DB before moving to Gemini calls
+        db.commit()
 
         # -- Step 5: Run Gemini calls concurrently & Process results IMMEDIATELY -----
         from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -724,17 +734,37 @@ def trigger_pipeline_from_live_news(
         }
         direction = direction_map.get(bias, "NEUTRAL")
 
-        # Indicators Agent 2.5 should check (default set for live news)
-        indicators_to_check = {
-            "Trend": ["EMA", "VWAP"],
-            "Momentum": ["RSI", "MACD"],
-            "Volatility": ["ATR"],
+        # Use indicators selected by the Gemini Live Analyzer (matching Agent 2's format)
+        # Falls back to a sensible default set if Gemini didn't output any
+        indicators_from_gemini = live_news_output.get("indicators_to_check", {})
+        if indicators_from_gemini and any(indicators_from_gemini.values()):
+            indicators_to_check = indicators_from_gemini
+            print(f"  [LIVE NEWS -> PIPELINE] Using Gemini-selected indicators: {indicators_to_check}")
+        else:
+            indicators_to_check = {
+                "trend": ["EMA", "MACD"],
+                "momentum": ["RSI"],
+                "volatility": ["ATR"],
+                "volume": ["VWAP"],
+            }
+            print(f"  [LIVE NEWS -> PIPELINE] Using default indicators (Gemini didn't specify)")
+
+        # Timeframe plan from Gemini or default
+        timeframe_from_gemini = live_news_output.get("timeframe_plan", {})
+        timeframe_plan = {
+            "primary_timeframe": timeframe_from_gemini.get("primary_timeframe", "1m"),
+            "secondary_timeframe": timeframe_from_gemini.get("secondary_timeframe", None),
+            "data_window_minutes": timeframe_from_gemini.get("data_window_minutes", 30),
+            "use_previous_data_for_secondary": timeframe_from_gemini.get("use_previous_data_for_secondary", False),
+            "reason": timeframe_from_gemini.get("reason", "Live news intraday setup"),
         }
 
         agent2_view = {
             "validation": {
                 "status": "CONFIRMED" if should_trade else "INVALIDATED",
                 "reason": live_news_output.get("trade_reason", ""),
+                "confidence_in_validation": "HIGH" if confidence >= 70 else "MEDIUM",
+                "early_signal_quality": "STRONG" if confidence >= 75 else "MIXED",
             },
             "stock": {
                 "symbol": symbol,
@@ -749,18 +779,24 @@ def trigger_pipeline_from_live_news(
             },
             "trade_suitability": {
                 "mode": "INTRADAY",
+                "holding_logic": "SHORT_INTRADAY_MOVE",
             },
-            "timeframe_plan": {
-                "primary_timeframe": "1m",
-            },
+            "timeframe_plan": timeframe_plan,
             "indicators_to_check": indicators_to_check,
+            "decision": {
+                "should_pass_to_agent_3": True,
+                "pass_reason": f"Live news pipeline: should_trade={should_trade}, confidence={confidence}",
+                "agent_3_instruction": "PROCEED",
+            },
             "direction": direction,
             "confidence": confidence,
             "live_news_context": {
                 "what_happened": live_news_output.get("what_happened", ""),
                 "why_news_matters": live_news_output.get("why_news_matters", ""),
                 "trading_thesis": live_news_output.get("trading_thesis", ""),
+                "invalidation_logic": live_news_output.get("invalidation_logic", ""),
                 "reaction_magnitude_pct": live_news_output.get("reaction_magnitude_pct", 0),
+                "remaining_move_estimate": live_news_output.get("remaining_move_estimate", ""),
             }
         }
 

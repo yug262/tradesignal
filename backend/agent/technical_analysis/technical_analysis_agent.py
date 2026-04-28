@@ -220,11 +220,33 @@ def run_technical_analysis(db: Session = None, signal_ids: list = None) -> dict:
         for sig in confirmed_signals:
             agent2_data = sig.confirmation_data if isinstance(sig.confirmation_data, dict) else {}
 
-            # Skip if Agent 2 already has technical_analysis_data
+            # Skip if Agent 2.5 already ran — UNLESS verdict was WAIT (allows retry)
             if isinstance(sig.execution_data, dict) and sig.execution_data.get("_has_agent25"):
-                logger.info("[TRIGGER] Agent 2.5 skipped %s: already exists", sig.symbol)
-                summary["skipped"] += 1
-                continue
+                ta_data = sig.execution_data.get("technical_analysis_data", {})
+                ta_inner = ta_data.get("technical_analysis", {}) if isinstance(ta_data, dict) else {}
+                prev_verdict = ta_inner.get("agent_3_handoff", {}).get("technical_go_no_go", "")
+                analyzed_at = sig.execution_data.get("analyzed_at", 0)
+                age_ms = _now_ms() - analyzed_at if analyzed_at else 999999
+                
+                # Allow re-analysis if verdict was WAIT and at least 10 minutes have passed
+                if prev_verdict == "WAIT" and age_ms >= 10 * 60 * 1000:
+                    logger.info("[AGENT 2.5] %s: previous verdict was WAIT (%d min ago) — re-analyzing with fresh data",
+                               sig.symbol, age_ms // 60000)
+                    # Clear the old flag so it gets re-processed
+                    sig.execution_data = {k: v for k, v in sig.execution_data.items() 
+                                          if k not in ("_has_agent25", "technical_analysis_data", "analyzed_at",
+                                                       "candle_count", "indicators_computed")}
+                    db.commit()
+                elif prev_verdict == "GO":
+                    # Already GO — Agent 3 should have been triggered. Skip.
+                    logger.info("[TRIGGER] Agent 2.5 skipped %s: already GO", sig.symbol)
+                    summary["skipped"] += 1
+                    continue
+                else:
+                    logger.info("[TRIGGER] Agent 2.5 skipped %s: verdict=%s, age=%dmin (need 10min for retry)",
+                               sig.symbol, prev_verdict, age_ms // 60000)
+                    summary["skipped"] += 1
+                    continue
 
             indicators_to_check = agent2_data.get("indicators_to_check", {})
             timeframe_plan = agent2_data.get("timeframe_plan", {})

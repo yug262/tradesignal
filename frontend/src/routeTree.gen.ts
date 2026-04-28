@@ -18,6 +18,7 @@ import { Route as NewsFeedRouteImport } from './routes/news-feed'
 import { Route as ModeAnalysisRouteImport } from './routes/mode-analysis'
 import { Route as MarketRegimeRouteImport } from './routes/market-regime'
 import { Route as MarketOpenRouteImport } from './routes/market-open'
+import { Route as LiveNewsRouteImport } from './routes/live-news'
 import { Route as JournalRouteImport } from './routes/journal'
 import { Route as GroupingRouteImport } from './routes/grouping'
 import { Route as ExecutionPlannerRouteImport } from './routes/execution-planner'
@@ -70,6 +71,11 @@ const MarketOpenRoute = MarketOpenRouteImport.update({
   path: '/market-open',
   getParentRoute: () => rootRouteImport,
 } as any)
+const LiveNewsRoute = LiveNewsRouteImport.update({
+  id: '/live-news',
+  path: '/live-news',
+  getParentRoute: () => rootRouteImport,
+} as any)
 const JournalRoute = JournalRouteImport.update({
   id: '/journal',
   path: '/journal',
@@ -107,6 +113,7 @@ export interface FileRoutesByFullPath {
   '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
+  '/live-news': typeof LiveNewsRoute
   '/market-open': typeof MarketOpenRoute
   '/market-regime': typeof MarketRegimeRoute
   '/mode-analysis': typeof ModeAnalysisRoute
@@ -124,6 +131,7 @@ export interface FileRoutesByTo {
   '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
+  '/live-news': typeof LiveNewsRoute
   '/market-open': typeof MarketOpenRoute
   '/market-regime': typeof MarketRegimeRoute
   '/mode-analysis': typeof ModeAnalysisRoute
@@ -142,6 +150,7 @@ export interface FileRoutesById {
   '/execution-planner': typeof ExecutionPlannerRoute
   '/grouping': typeof GroupingRoute
   '/journal': typeof JournalRoute
+  '/live-news': typeof LiveNewsRoute
   '/market-open': typeof MarketOpenRoute
   '/market-regime': typeof MarketRegimeRoute
   '/mode-analysis': typeof ModeAnalysisRoute
@@ -161,6 +170,7 @@ export interface FileRouteTypes {
     | '/execution-planner'
     | '/grouping'
     | '/journal'
+    | '/live-news'
     | '/market-open'
     | '/market-regime'
     | '/mode-analysis'
@@ -178,6 +188,7 @@ export interface FileRouteTypes {
     | '/execution-planner'
     | '/grouping'
     | '/journal'
+    | '/live-news'
     | '/market-open'
     | '/market-regime'
     | '/mode-analysis'
@@ -195,6 +206,7 @@ export interface FileRouteTypes {
     | '/execution-planner'
     | '/grouping'
     | '/journal'
+    | '/live-news'
     | '/market-open'
     | '/market-regime'
     | '/mode-analysis'
@@ -213,6 +225,7 @@ export interface RootRouteChildren {
   ExecutionPlannerRoute: typeof ExecutionPlannerRoute
   GroupingRoute: typeof GroupingRoute
   JournalRoute: typeof JournalRoute
+  LiveNewsRoute: typeof LiveNewsRoute
   MarketOpenRoute: typeof MarketOpenRoute
   MarketRegimeRoute: typeof MarketRegimeRoute
   ModeAnalysisRoute: typeof ModeAnalysisRoute
@@ -290,6 +303,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof MarketOpenRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/live-news': {
+      id: '/live-news'
+      path: '/live-news'
+      fullPath: '/live-news'
+      preLoaderRoute: typeof LiveNewsRouteImport
+      parentRoute: typeof rootRouteImport
+    }
     '/journal': {
       id: '/journal'
       path: '/journal'
@@ -341,6 +361,7 @@ const rootRouteChildren: RootRouteChildren = {
   ExecutionPlannerRoute: ExecutionPlannerRoute,
   GroupingRoute: GroupingRoute,
   JournalRoute: JournalRoute,
+  LiveNewsRoute: LiveNewsRoute,
   MarketOpenRoute: MarketOpenRoute,
   MarketRegimeRoute: MarketRegimeRoute,
   ModeAnalysisRoute: ModeAnalysisRoute,

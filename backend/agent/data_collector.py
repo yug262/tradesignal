@@ -139,7 +139,7 @@ def _parse_ms(val) -> int:
     return fallback
 
 
-def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
+def trigger_news_fetch(news_endpoint_url: str, db: Session) -> list[str]:
     """
     Pull fresh news from the external endpoint and save new articles to DB.
     
@@ -147,7 +147,7 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
     during the agent analysis pipeline. This ensures we never miss news that
     might become relevant.
     
-    Returns count of new articles saved.
+    Returns list of newly saved article IDs (so callers can process them directly).
     """
     # Headers for ngrok endpoints
     headers = {
@@ -171,11 +171,11 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
 
         if not isinstance(articles_list, list):
             print(f"  [WARN] Unexpected response format: {type(articles_list)}")
-            return 0
+            return []
 
         print(f"  [FETCH] Received {len(articles_list)} articles from endpoint")
 
-        saved = 0
+        saved_ids = []
         skipped_existing = 0
         skipped_invalid = 0
 
@@ -219,6 +219,8 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
                     print(f"  [DEBUG] Article {item_id} filtered out (Impact: {impact})")
                 skipped_invalid += 1
                 continue
+            # Track this valid article ID for the caller even if it already exists in DB
+            # (caller uses this to know which articles came from THIS fetch cycle)
 
             # Timestamps
             pub_at_ms = _parse_ms(item.get("published_at") or item.get("published") or item.get("timestamp"))
@@ -267,7 +269,7 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
                     horizon=horizon
                 )
                 db.add(new_art)
-                saved += 1
+                saved_ids.append(item_id)
             else:
                 # Force backfill for existing articles if intelligence is missing or impact score was 0
                 needs_update = (
@@ -293,22 +295,22 @@ def trigger_news_fetch(news_endpoint_url: str, db: Session) -> int:
                     skipped_existing += 1
 
         db.commit()
-        print(f"  [FETCH] Result: {saved} new | {skipped_existing} updated/skipped | {skipped_invalid} invalid")
-        return saved
+        print(f"  [FETCH] Result: {len(saved_ids)} new | {skipped_existing} updated/skipped | {skipped_invalid} invalid")
+        return saved_ids
 
     except httpx.ConnectError as e:
         print(f"  [WARN] News endpoint unreachable (connection error): {e}")
-        return 0
+        return []
     except httpx.TimeoutException as e:
         print(f"  [WARN] News endpoint timed out: {e}")
-        return 0
+        return []
     except httpx.HTTPStatusError as e:
         print(f"  [WARN] News endpoint returned error {e.response.status_code}: {e}")
-        return 0
+        return []
     except Exception as e:
         print(f"  [WARN] News fetch failed: {e}")
         traceback.print_exc()
-        return 0
+        return []
 
 
 def fetch_stock_data_for_symbols(symbols: list[str]) -> dict[str, dict]:

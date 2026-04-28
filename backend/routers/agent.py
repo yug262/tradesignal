@@ -130,14 +130,15 @@ def trigger_manual_news_fetch(db: Session = Depends(get_db)):
     if not config.news_endpoint_url:
         return {"status": "error", "message": "No news endpoint URL configured"}
 
-    new_count = trigger_news_fetch(config.news_endpoint_url, db)
+    new_ids = trigger_news_fetch(config.news_endpoint_url, db)
 
     # Count total articles in DB
     total_in_db = db.query(db_models.NewsArticle).count()
 
     return {
         "status": "success",
-        "new_articles_saved": new_count,
+        "new_articles_saved": len(new_ids),
+        "new_article_ids": new_ids,
         "total_articles_in_db": total_in_db,
     }
 

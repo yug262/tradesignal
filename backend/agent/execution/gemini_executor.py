@@ -892,16 +892,25 @@ def _run_pre_llm_gates(
     decision = agent2_view.get("decision", {})
     validation = agent2_view.get("validation", {})
 
+    # Check if Agent 2.5 has already approved this signal (overrides Agent 2's decision)
+    agent25_go = False
+    if agent25_data and isinstance(agent25_data, dict):
+        ta_handoff = agent25_data.get("technical_analysis", {}).get("agent_3_handoff", {})
+        agent25_go = str(ta_handoff.get("technical_go_no_go", "")).upper() == "GO"
+    
+    if agent25_go:
+        print(f"[AGENT 3 GATE] {symbol}: Agent 2.5 GO detected — Agent 2 gates bypassed")
+
     # 1a. should_pass_to_agent_3
     should_pass = decision.get("should_pass_to_agent_3", False)
-    if not should_pass:
+    if not should_pass and not agent25_go:
         reason = "Agent 2 decision: should_pass_to_agent_3 = false"
         print(f"[AGENT 3 GATE] {symbol}: blocked by Agent 2 should_pass=false")
         return _build_avoid_result(symbol, reason, "gate_agent2_should_pass", rp)
 
-    # 1b. validation.status must be CONFIRMED
+    # 1b. validation.status must be CONFIRMED (unless Agent 2.5 overrides)
     val_status = str(validation.get("status", "")).upper()
-    if val_status and val_status != "CONFIRMED":
+    if val_status and val_status != "CONFIRMED" and not agent25_go:
         reason = f"Agent 2 validation.status = {val_status} (expected CONFIRMED)"
         print(f"[AGENT 3 GATE] {symbol}: blocked by Agent 2 status={val_status}")
         return _build_avoid_result(symbol, reason, "gate_agent2_status", rp)
